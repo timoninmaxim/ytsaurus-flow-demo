@@ -14,15 +14,18 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` both at the runner level and via
   `vanilla/node_config` for controller/worker jobs.
 - **Bootstrap of Cypress objects** — `yt_sync_mini` (`yt/yt/flow/library/python/yt_sync_mini`) only;
-  no internal yt_sync. Each scenario ships its own `yt_sync/` script (PIPELINES/STAGES dicts +
-  `__main__.py`, as in `examples/cpp/noop/yt_sync`) that creates the pipeline node and the scenario's
-  queues/tables/consumers/producers.
+  no internal yt_sync. It is `pip install`-ed from the ytsaurus repo via the single wheel
+  `ytsaurus-flow-yt-sync-mini` (`yt/python/packages/ytsaurus-flow-yt-sync-mini`, alongside the other
+  ytsaurus Python packages; it bundles `pipeline_tables` too), not vendored. Each scenario ships its
+  own `yt_sync/` script (PIPELINES/STAGES dicts + `__main__.py`, as in `examples/cpp/noop/yt_sync`)
+  that creates the pipeline node and the scenario's queues/tables/consumers/producers.
 - **Cluster-name aliasing.** `<cluster=...>` rich-path references resolve to
   `<cluster_name>.yt.yandex.net` by default; every vanilla block must carry
   `proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}`.
-- **Queue consumer registrations.** The demo cluster runs no queue agents, but registration checks
-  are enforced. One-time fixup applied: `//sys/queue_agents/consumer_registrations` created and
-  mounted by hand (queue-agent state v7+ schema); after that `register_queue_consumer` works.
+- **Queue consumer registrations.** The demo cluster runs a real queue agent (registered in
+  `//sys/@cluster_connection/queue_agent`, with `//sys/queue_agents/consumer_registrations`
+  provisioned by the queue-agent state migration), so `register_queue_consumer` works through the
+  normal path with no manual fixup.
 - **Pool**: `$YT_POOL`. Worker/controller job defaults (6 CPU / 18 GiB) fit the demo exec nodes
   (16 CPU / 65 GiB × 5).
 - **Binaries** are stripped before upload (2.6 GB profile → ~180 MB).

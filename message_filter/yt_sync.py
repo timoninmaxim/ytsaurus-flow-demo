@@ -1,11 +1,12 @@
 # Creates the Cypress objects for the message_filter scenario: the pipeline
 # node, the input queue with its consumer, and the output queue.
 #
-# Run: bootstrap.sh (sets PYTHONPATH to ../lib and the cluster env).
+# Run: bootstrap.sh (loads the cluster env). Requires the pip-installed
+# yt_sync_mini + pipeline_tables packages (see the repo README).
 
 import os
 
-from yt_sync_mini import StagesSpec, run_yt_sync_easy_mode
+from yt.yt.flow.library.python.yt_sync_mini import StagesSpec, run_yt_sync_easy_mode
 
 QUEUE_SCHEMA = [
     {"name": "key", "type": "string"},

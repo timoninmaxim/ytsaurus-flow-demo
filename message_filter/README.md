@@ -29,6 +29,10 @@ verification if you do not plan to inspect it.
 
 ## Run record (2026-07-30)
 
-Executed end-to-end with the scripts in this dir (`bootstrap.sh` → `prepare_data.sh` →
-`deploy.sh` → `verify.sh`): pipeline reached `Working`, drained the input, finished `Completed`;
-`verify.sh` printed `output keys: good_0,good_1,good_2` / `PASS: bad rows were filtered out`.
+Re-run from scratch on a freshly cleaned cluster (old objects, consumer registration, and vanilla
+operation removed first), with the Cypress bootstrap driven by the pip-installed `yt_sync_mini` /
+`pipeline_tables` packages instead of a vendored copy. The consumer registration went through the
+cluster's real queue agent with no manual fixup. Executed end-to-end with the scripts in this dir
+(`bootstrap.sh` → `prepare_data.sh` → `deploy.sh` → `verify.sh`): pipeline reached `Working`,
+drained the input, finished `Completed`; `verify.sh` printed `output keys: good_0,good_1,good_2` /
+`PASS: bad rows were filtered out`.

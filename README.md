@@ -13,6 +13,24 @@ See `PLAN.md` for the full scenario list and status.
   (`ya make --build=profile yt/yt/flow/bin/flow_server`); scenarios with custom C++ code build their
   own binary the same way.
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`).
+- The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
+  [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo. It is a single wheel that ships both
+  `yt_sync_mini` and its `pipeline_tables` dependency under their real import path
+  (`yt.yt.flow.library.python.{yt_sync_mini,pipeline_tables}` — the same names the in-repo build
+  uses, layered onto the `yt` package from `ytsaurus-client` via PEP 420 namespaces). Its `setup.py`
+  lives beside the other ytsaurus Python packages, so it builds the same way they do:
+
+  ```bash
+  # from a ytsaurus checkout:
+  git clone https://github.com/ytsaurus/ytsaurus.git
+  pip install ./ytsaurus/yt/python/packages/ytsaurus-flow-yt-sync-mini
+  ```
+
+  Or install straight from GitHub without a manual checkout:
+
+  ```bash
+  pip install "ytsaurus-flow-yt-sync-mini @ git+https://github.com/ytsaurus/ytsaurus.git#subdirectory=yt/python/packages/ytsaurus-flow-yt-sync-mini"
+  ```
 - `curl`.
 
 ## Configuration — no secrets in this repo
@@ -44,18 +62,17 @@ Two cluster quirks every spec template accounts for:
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
 
-One-time cluster fixup (already applied to the demo cluster): the cluster runs no queue agents,
-but consumer-registration checks are enforced; `//sys/queue_agents/consumer_registrations` was
-created and mounted by hand with the queue-agent state v7+ schema (five ascending key columns
-`queue_cluster, queue_path, consumer_cluster, consumer_path, consumer_name`, value columns
-`vital` boolean and `partitions` any).
+The demo cluster runs a real queue agent (`//sys/@cluster_connection/queue_agent` points at the
+`qa-*` instances and `//sys/queue_agents/consumer_registrations` is provisioned by the queue-agent
+state migration), so `register_queue_consumer` works through the normal path — no manual Cypress
+fixup is required.
 
 ## Running a scenario
 
 ```bash
 export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
 cd <scenario>
-./bootstrap.sh          # create Cypress objects (yt_sync_mini, vendored in lib/)
+./bootstrap.sh          # create Cypress objects (pip-installed yt_sync_mini)
 ./prepare_data.sh       # write input data (if the scenario needs any)
 ../common/deploy.sh <scenario>
 ./verify.sh             # assert the original test's expected result
@@ -65,8 +82,6 @@ cd <scenario>
 ## Layout
 
 - `common/` — env loading, curl API helpers, deploy/stop scripts shared by all scenarios.
-- `lib/` — vendored `yt_sync_mini` + `pipeline_tables` from the ytsaurus repo (Cypress bootstrap
-  without internal tooling).
 - `<scenario>/` — one dir per scenario: `README.md`, `pipeline.yson.template`, `yt_sync.py`,
   `bootstrap.sh`, `prepare_data.sh`, `verify.sh`, plus C++ pipeline code where the stock
   `flow_server` binary is not enough.
