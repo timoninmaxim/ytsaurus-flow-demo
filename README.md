@@ -4,8 +4,6 @@ Re-implementations of YT Flow integration-test scenarios as standalone pipelines
 opensource YTsaurus cluster with **vanilla operations only**. Each scenario dir is self-contained:
 pipeline spec, Cypress bootstrap, data preparation, deployment, and verification scripts.
 
-See `PLAN.md` for the full scenario list and status.
-
 ## Prerequisites
 
 - An opensource YTsaurus cluster reachable over its HTTP proxy.
@@ -62,16 +60,16 @@ Two cluster quirks every spec template accounts for:
 ```bash
 export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
 cd <scenario>
-./bootstrap.sh          # create Cypress objects (pip-installed yt_sync_mini)
-./prepare_data.sh       # write input data (if the scenario needs any)
+source ../common/env.sh   # once: exports cluster vars + ytcurl/ytget/... helpers
+
+python3 yt_sync.py        # Cypress objects (pip-installed yt_sync_mini)
+./prepare_data.sh         # write input data (if the scenario needs any)
 ../common/deploy.sh <scenario>
-./verify.sh             # assert the original test's expected result
+./verify.sh               # assert the original test's expected result
 ../common/stop.sh <scenario> <operation_id>   # for non-finite pipelines
 ```
 
 ## Layout
 
 - `common/` — env loading, curl API helpers, deploy/stop scripts shared by all scenarios.
-- `<scenario>/` — one dir per scenario: `README.md`, `pipeline.yson.template`, `yt_sync.py`,
-  `bootstrap.sh`, `prepare_data.sh`, `verify.sh`, plus C++ pipeline code where the stock
-  `flow_server` binary is not enough.
+- `<scenario>/` — one dir per scenario.

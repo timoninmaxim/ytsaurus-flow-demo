@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Waits for the finite pipeline to complete and checks the filtered output.
+#
+# Assumes the cluster env is already loaded (source common/env.sh once); the
+# ytput/ytget helpers are inherited via env.sh's `export -f`.
 set -euo pipefail
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$REPO_ROOT/common/env.sh"
 YTDIR="$YT_DEV_ROOT/message_filter"
 
 for _ in $(seq 1 60); do

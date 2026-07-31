@@ -17,12 +17,17 @@ This mirrors the original test's assertion `keys == ["good_0", "good_1", "good_2
 
 ```bash
 export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
+source ../common/env.sh     # once: exports cluster vars + ytcurl/ytget/... helpers
 
-./bootstrap.sh              # pipeline node, input_queue + consumer, output_queue
+python3 yt_sync.py          # Cypress objects (pipeline node, input_queue + consumer, output_queue)
+                            # idempotent; re-run if it hits transient master lag
 ./prepare_data.sh           # 5 rows: good_0, bad, good_1, bad, good_2
 ../common/deploy.sh message_filter
 ./verify.sh                 # waits for Completed, asserts output keys
 ```
+
+Source `common/env.sh` once; the child scripts inherit its exported vars and `ytput`/`ytget`
+helpers (env.sh `export -f`s them), so they run as plain `./scripts` with nothing else to source.
 
 The pipeline is finite — no `stop.sh` needed; abort the controller/worker vanilla operation after
 verification if you do not plan to inspect it.
@@ -33,6 +38,6 @@ Re-run from scratch on a freshly cleaned cluster (old objects, consumer registra
 operation removed first), with the Cypress bootstrap driven by the pip-installed `yt_sync_mini` /
 `pipeline_tables` packages instead of a vendored copy. The consumer registration went through the
 cluster's real queue agent with no manual fixup. Executed end-to-end with the scripts in this dir
-(`bootstrap.sh` → `prepare_data.sh` → `deploy.sh` → `verify.sh`): pipeline reached `Working`,
+(`yt_sync.py` → `prepare_data.sh` → `deploy.sh` → `verify.sh`): pipeline reached `Working`,
 drained the input, finished `Completed`; `verify.sh` printed `output keys: good_0,good_1,good_2` /
 `PASS: bad rows were filtered out`.

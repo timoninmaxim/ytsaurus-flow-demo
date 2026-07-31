@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Writes the 5 input rows; the two "bad" rows must be dropped by the filter.
+#
+# Assumes the cluster env is already loaded (source common/env.sh once); the
+# ytput/ytget helpers are inherited via env.sh's `export -f`.
 set -euo pipefail
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$REPO_ROOT/common/env.sh"
 YTDIR="$YT_DEV_ROOT/message_filter"
 
 # YT's JSON format encodes a leading "$" in a key as "$$".

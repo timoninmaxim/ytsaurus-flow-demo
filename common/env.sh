@@ -22,8 +22,10 @@ done
 export YT_API="$YT_PROXY_EXTERNAL/api/v4"
 export YT_AUTH="Authorization: OAuth $YT_TOKEN"
 
-# curl wrappers for the YT HTTP API.
+# curl wrappers for the YT HTTP API. Exported (export -f) so child scripts run
+# with plain `./script` inherit them — env.sh is the only thing you source.
 ytcurl() { curl -sS --max-time "${YT_CURL_TIMEOUT:-60}" -H "$YT_AUTH" "$@"; }
 ytpost() { local cmd=$1 params=$2; ytcurl -X POST -H 'X-YT-Header-Format: <format=text>yson' -H "X-YT-Parameters: $params" "$YT_API/$cmd"; }
 ytput()  { local cmd=$1 params=$2; shift 2; ytcurl -X PUT -H 'X-YT-Header-Format: <format=text>yson' -H "X-YT-Parameters: $params" "$@" "$YT_API/$cmd"; }
 ytget()  { local cmd=$1; shift; ytcurl "$YT_API/$cmd" "$@"; }
+export -f ytcurl ytpost ytput ytget
