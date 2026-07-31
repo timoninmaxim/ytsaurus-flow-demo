@@ -14,14 +14,9 @@ See `PLAN.md` for the full scenario list and status.
   own binary the same way.
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`).
 - The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
-  [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo. It is a single wheel that ships both
-  `yt_sync_mini` and its `pipeline_tables` dependency under their real import path
-  (`yt.yt.flow.library.python.{yt_sync_mini,pipeline_tables}` — the same names the in-repo build
-  uses, layered onto the `yt` package from `ytsaurus-client` via PEP 420 namespaces). Its `setup.py`
-  lives beside the `yt_sync_mini` sources under `yt/yt/flow/tools/yt_sync_mini`:
+  [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
 
   ```bash
-  # from a ytsaurus checkout:
   git clone https://github.com/ytsaurus/ytsaurus.git
   pip install ./ytsaurus/yt/yt/flow/tools/yt_sync_mini
   ```
@@ -61,11 +56,6 @@ Two cluster quirks every spec template accounts for:
   while the YT client defaults to IPv6-only resolution.
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
-
-The demo cluster runs a real queue agent (`//sys/@cluster_connection/queue_agent` points at the
-`qa-*` instances and `//sys/queue_agents/consumer_registrations` is provisioned by the queue-agent
-state migration), so `register_queue_consumer` works through the normal path — no manual Cypress
-fixup is required.
 
 ## Running a scenario
 
