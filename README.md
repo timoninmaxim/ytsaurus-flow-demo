@@ -18,18 +18,18 @@ See `PLAN.md` for the full scenario list and status.
   `yt_sync_mini` and its `pipeline_tables` dependency under their real import path
   (`yt.yt.flow.library.python.{yt_sync_mini,pipeline_tables}` — the same names the in-repo build
   uses, layered onto the `yt` package from `ytsaurus-client` via PEP 420 namespaces). Its `setup.py`
-  lives beside the other ytsaurus Python packages, so it builds the same way they do:
+  lives beside the `yt_sync_mini` sources under `yt/yt/flow/tools/yt_sync_mini`:
 
   ```bash
   # from a ytsaurus checkout:
   git clone https://github.com/ytsaurus/ytsaurus.git
-  pip install ./ytsaurus/yt/python/packages/ytsaurus-flow-yt-sync-mini
+  pip install ./ytsaurus/yt/yt/flow/tools/yt_sync_mini
   ```
 
   Or install straight from GitHub without a manual checkout:
 
   ```bash
-  pip install "ytsaurus-flow-yt-sync-mini @ git+https://github.com/ytsaurus/ytsaurus.git#subdirectory=yt/python/packages/ytsaurus-flow-yt-sync-mini"
+  pip install "ytsaurus-flow-yt-sync-mini @ git+https://github.com/ytsaurus/ytsaurus.git#subdirectory=yt/yt/flow/tools/yt_sync_mini"
   ```
 - `curl`.
 
