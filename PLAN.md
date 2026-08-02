@@ -10,6 +10,20 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   k8s-internal addresses. Deployment therefore uses a two-step bootstrap: upload the runner binary +
   config over the HTTP API, then run the runner *inside* the cluster as a 1-job vanilla operation
   (`YT_FLOW_WAIT=0`); the runner launches the real controller+worker vanilla operation from there.
+- **Planned switch to the external RPC proxy** (`$YT_PROXY_RPC`, announced 2026-08-02). Once
+  functional, the two-step bootstrap collapses: the runner runs on the dev host and talks RPC
+  directly (spec submission, vanilla launch, binary upload), and data-prep/verify move from curl to
+  the `ytsaurus-client` RPC backend. Checked 2026-08-02 — **not usable yet**, two blockers:
+  1. The endpoint terminates at the L7 HTTP balancer (YT bus frames are answered with
+     `HTTP 400 Bad Request`; unknown-host probes get the balancer's 404 signature). YT RPC is a
+     binary protocol — it needs an L4 TCP passthrough to the RPC proxy's port, not an HTTP route.
+  2. `discover_proxies` still returns only the k8s-internal address, and the flow runner builds its
+     connection via discovery (`TConnectionConfig::CreateFromClusterUrl`,
+     `library/cpp/pipeline_helpers/pipeline.cpp`) with no way to pass static `proxy_addresses`.
+     Either the RPC proxies must advertise the external endpoint (then the runner works unchanged),
+     or the runner needs a config knob for `proxy_addresses` + `enable_proxy_discovery=%false`
+     (clients that accept a full connection config — python `ytsaurus-rpc-driver`, worker/controller
+     `clients_cache` — can use the static-address form already).
 - **DNS.** The demo k8s DNS serves IPv4 only; every config must set
   `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` both at the runner level and via
   `vanilla/node_config` for controller/worker jobs.

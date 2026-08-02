@@ -28,8 +28,9 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
 
 ## Configuration — no secrets in this repo
 
-All cluster coordinates and credentials live in a private env file **outside** the repo. Point
-`YT_FLOW_DEMO_ENV` at it; it must export:
+All cluster coordinates and credentials live in a private env file that git never sees: either
+`env.sh` at the repo root (gitignored, the default) or any path pointed to by `YT_FLOW_DEMO_ENV`.
+It must export:
 
 | Variable | Meaning |
 |----------|---------|
@@ -39,6 +40,7 @@ All cluster coordinates and credentials live in a private env file **outside** t
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
 | `YT_POOL` | scheduler pool for vanilla operations |
+| `YT_PROXY_RPC` | *(optional)* external RPC proxy endpoint (`host:port`), once the cluster exposes one |
 
 ## Deployment model
 
@@ -54,6 +56,16 @@ Two cluster quirks every spec template accounts for:
   while the YT client defaults to IPv6-only resolution.
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
+
+### RPC proxy access (planned)
+
+An external RPC endpoint (`$YT_PROXY_RPC`) will replace the bootstrap-operation workaround: the
+runner will run on the dev host and talk RPC directly, and data-prep/verify scripts will move to
+the `ytsaurus-client` RPC backend (`pip install ytsaurus-rpc-driver`). As of 2026-08-02 the
+endpoint is not usable — see PLAN.md ("Planned switch to the external RPC proxy") for the two
+blockers: the balancer routes it as L7 HTTP (YT's binary bus protocol needs an L4 TCP passthrough),
+and `discover_proxies` still advertises only k8s-internal addresses while the flow runner cannot
+take static `proxy_addresses`.
 
 ## Running a scenario
 
