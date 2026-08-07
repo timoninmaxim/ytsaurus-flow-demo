@@ -23,13 +23,8 @@ for var in YT_TOKEN YT_PROXY_EXTERNAL YT_PROXY_INTERNAL YT_CLUSTER_NAME YT_DEV_R
     [ -n "${!var:-}" ] || { echo "error: $var is not set by $YT_FLOW_DEMO_ENV" >&2; exit 1; }
 done
 
-export YT_API="$YT_PROXY_EXTERNAL/api/v4"
-export YT_AUTH="Authorization: OAuth $YT_TOKEN"
+# The scenarios drive the cluster through the public `yt` CLI, which reads YT_PROXY and YT_TOKEN
+# from the environment. Exporting them here is all a child script needs to talk to the cluster.
+export YT_PROXY="$YT_PROXY_EXTERNAL"
 
-# curl wrappers for the YT HTTP API. Exported (export -f) so child scripts run
-# with plain `./script` inherit them — env.sh is the only thing you source.
-ytcurl() { curl -sS --max-time "${YT_CURL_TIMEOUT:-60}" -H "$YT_AUTH" "$@"; }
-ytpost() { local cmd=$1 params=$2; ytcurl -X POST -H 'X-YT-Header-Format: <format=text>yson' -H "X-YT-Parameters: $params" "$YT_API/$cmd"; }
-ytput()  { local cmd=$1 params=$2; shift 2; ytcurl -X PUT -H 'X-YT-Header-Format: <format=text>yson' -H "X-YT-Parameters: $params" "$@" "$YT_API/$cmd"; }
-ytget()  { local cmd=$1; shift; ytcurl "$YT_API/$cmd" "$@"; }
-export -f ytcurl ytpost ytput ytget
+command -v yt > /dev/null || { echo "error: the yt CLI is not on PATH (pip install ytsaurus-client)" >&2; exit 1; }

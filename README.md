@@ -10,7 +10,8 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
 - The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo
   (`ya make --build=profile yt/yt/flow/bin/flow_server`); scenarios with custom C++ code build their
   own binary the same way.
-- Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`).
+- Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`), which also provides
+  the `yt` CLI the scripts drive the cluster with.
 - The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
   [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
 
@@ -24,7 +25,6 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
   ```bash
   pip install "ytsaurus-flow-yt-sync-mini @ git+https://github.com/ytsaurus/ytsaurus.git#subdirectory=yt/yt/flow/tools/yt_sync_mini"
   ```
-- `curl`.
 
 ## Configuration — no secrets in this repo
 
@@ -78,7 +78,7 @@ in-cluster components that read it.
 ```bash
 export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
 cd <scenario>
-source ../common/env.sh   # once: exports cluster vars + ytcurl/ytget/... helpers
+source ../common/env.sh   # once: exports the cluster vars, incl. the yt CLI's YT_PROXY/YT_TOKEN
 
 python3 yt_sync.py        # Cypress objects (pip-installed yt_sync_mini)
 ./prepare_data.sh         # write input data (if the scenario needs any)
@@ -89,5 +89,5 @@ python3 yt_sync.py        # Cypress objects (pip-installed yt_sync_mini)
 
 ## Layout
 
-- `common/` — env loading, curl API helpers, deploy/stop scripts shared by all scenarios.
+- `common/` — env loading and the deploy/stop scripts shared by all scenarios.
 - `<scenario>/` — one dir per scenario.

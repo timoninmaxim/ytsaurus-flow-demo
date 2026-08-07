@@ -41,4 +41,4 @@ PYEOF
 
 YT_FLOW_WAIT=0 "$WORK/flow_server" --config "$WORK/pipeline.yson"
 
-echo -n "pipeline state: "; ytget get_pipeline_state -G --data-urlencode "pipeline_path=$YT_DEV_ROOT/$SCENARIO/pipeline"; echo
+echo "pipeline state: $(yt flow get-pipeline-state "$YT_DEV_ROOT/$SCENARIO/pipeline")"
