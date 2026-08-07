@@ -40,32 +40,38 @@ It must export:
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
 | `YT_POOL` | scheduler pool for vanilla operations |
-| `YT_PROXY_RPC` | *(optional)* external RPC proxy endpoint (`host:port`), once the cluster exposes one |
+| `YT_PROXY_RPC` | RPC proxy endpoint reachable from your host (`host:port`) |
 
 ## Deployment model
 
-The cluster's RPC proxies advertise k8s-internal addresses, so a runner on the dev host cannot
-connect natively. `common/deploy.sh` therefore uploads the (stripped) binary and the rendered
-runner config over the HTTP API and starts a 1-job **bootstrap vanilla operation** that executes
-the runner inside the cluster with `YT_FLOW_WAIT=0`: the runner launches the real
-controller+worker vanilla operation, submits the pipeline spec, and exits.
+`common/deploy.sh` runs the flow runner **on the dev host**: it connects over RPC, uploads the
+(stripped) binary, submits the pipeline spec and launches the controller+worker vanilla operation,
+then exits (`YT_FLOW_WAIT=0`) instead of tailing the pipeline.
 
-Two cluster quirks every spec template accounts for:
+The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
+the runner config pins the reachable one instead of relying on proxy discovery:
 
-- `address_resolver = {enable_ipv4=%true; enable_ipv6=%false}` — k8s DNS serves A-records only,
-  while the YT client defaults to IPv6-only resolution.
+```yson
+"clients_cache" = {
+    "default_connection" = {
+        "enable_proxy_discovery" = %false;
+        "proxy_addresses" = ["${YT_PROXY_RPC}"];
+    };
+};
+```
+
+Three cluster quirks every spec template accounts for:
+
+- `address_resolver = {enable_ipv4=%true; enable_ipv6=%true}` at the runner level — the external
+  RPC endpoint is reached through NAT64, so IPv6 must stay enabled.
+- `vanilla/node_config` keeps `{enable_ipv4=%true; enable_ipv6=%false}` for the in-cluster
+  controller/worker jobs — k8s DNS serves A-records only, while the YT client defaults to IPv6.
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
 
-### RPC proxy access (planned)
-
-An external RPC endpoint (`$YT_PROXY_RPC`) will replace the bootstrap-operation workaround: the
-runner will run on the dev host and talk RPC directly, and data-prep/verify scripts will move to
-the `ytsaurus-client` RPC backend (`pip install ytsaurus-rpc-driver`). As of 2026-08-02 the
-endpoint is not usable — see PLAN.md ("Planned switch to the external RPC proxy") for the two
-blockers: the balancer routes it as L7 HTTP (YT's binary bus protocol needs an L4 TCP passthrough),
-and `discover_proxies` still advertises only k8s-internal addresses while the flow runner cannot
-take static `proxy_addresses`.
+`cluster_url` stays the *internal* HTTP proxy: with discovery disabled it is never dialled, and
+everything the runner records in Cypress (the vanilla operation manifest) then stays valid for the
+in-cluster components that read it.
 
 ## Running a scenario
 

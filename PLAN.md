@@ -6,27 +6,20 @@ and verify that the pipeline reaches `Working` and produces the result the origi
 
 ## Common infrastructure (shared by all scenarios)
 
-- **Cluster access.** Only the HTTP proxy is reachable from outside; RPC proxies advertise
-  k8s-internal addresses. Deployment therefore uses a two-step bootstrap: upload the runner binary +
-  config over the HTTP API, then run the runner *inside* the cluster as a 1-job vanilla operation
-  (`YT_FLOW_WAIT=0`); the runner launches the real controller+worker vanilla operation from there.
-- **Planned switch to the external RPC proxy** (`$YT_PROXY_RPC`, announced 2026-08-02). Once
-  functional, the two-step bootstrap collapses: the runner runs on the dev host and talks RPC
-  directly (spec submission, vanilla launch, binary upload), and data-prep/verify move from curl to
-  the `ytsaurus-client` RPC backend. Checked 2026-08-02 — **not usable yet**, two blockers:
-  1. The endpoint terminates at the L7 HTTP balancer (YT bus frames are answered with
-     `HTTP 400 Bad Request`; unknown-host probes get the balancer's 404 signature). YT RPC is a
-     binary protocol — it needs an L4 TCP passthrough to the RPC proxy's port, not an HTTP route.
-  2. `discover_proxies` still returns only the k8s-internal address, and the flow runner builds its
-     connection via discovery (`TConnectionConfig::CreateFromClusterUrl`,
-     `library/cpp/pipeline_helpers/pipeline.cpp`) with no way to pass static `proxy_addresses`.
-     Either the RPC proxies must advertise the external endpoint (then the runner works unchanged),
-     or the runner needs a config knob for `proxy_addresses` + `enable_proxy_discovery=%false`
-     (clients that accept a full connection config — python `ytsaurus-rpc-driver`, worker/controller
-     `clients_cache` — can use the static-address form already).
-- **DNS.** The demo k8s DNS serves IPv4 only; every config must set
-  `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` both at the runner level and via
-  `vanilla/node_config` for controller/worker jobs.
+- **Cluster access.** The runner runs on the dev host and talks RPC directly (spec submission,
+  binary upload, vanilla launch) — no bootstrap operation. Two things make that work:
+  1. The RPC proxy port must be exposed through a raw TCP (L4) passthrough on an address the dev
+     host can reach — YT RPC is a binary bus protocol, so an HTTP/L7 route cannot carry it. Put
+     that endpoint in `$YT_PROXY_RPC`. If the host has no external IPv4 route, dial the address
+     through NAT64 and leave IPv6 enabled in the runner's `address_resolver`.
+  2. `discover_proxies` may advertise only cluster-internal addresses, so the runner config pins
+     the reachable one instead: `clients_cache = {default_connection = {enable_proxy_discovery =
+     %false; proxy_addresses = [...]}}`. Honouring `clients_cache` in the vanilla launcher needed
+     a small upstream change to the flow runner; the rest of the runner already routed its clients
+     through the root clients cache.
+- **DNS.** The demo k8s DNS serves IPv4 only, so `vanilla/node_config` must set
+  `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` for controller/worker jobs. At
+  the runner level IPv6 must stay **enabled** instead — the RPC endpoint is reached over NAT64.
 - **Bootstrap of Cypress objects** — `yt_sync_mini` (`yt/yt/flow/library/python/yt_sync_mini`) only;
   no internal yt_sync. It is `pip install`-ed from the ytsaurus repo via the single wheel
   `ytsaurus-flow-yt-sync-mini` (`yt/python/packages/ytsaurus-flow-yt-sync-mini`, alongside the other
@@ -42,7 +35,8 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   normal path with no manual fixup.
 - **Pool**: `$YT_POOL`. Worker/controller job defaults (6 CPU / 18 GiB) fit the demo exec nodes
   (16 CPU / 65 GiB × 5).
-- **Binaries** are stripped before upload (2.6 GB profile → ~180 MB).
+- **Binaries** are stripped before use (2.6 GB profile → ~190 MB); `deploy.sh` runs the stripped
+  copy, because the runner uploads its own executable for the vanilla jobs.
 - **Verification** runs from the dev host over the HTTP API / `yt` CLI: `get-pipeline-state`,
   `select_rows`/`read_table` on outputs, flow-view reads — mirroring the original test's asserts.
 - **Layout per scenario** (`yandex/ytsaurus_dev/<scenario>/`):
