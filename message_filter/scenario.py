@@ -1,20 +1,26 @@
-# Runs the whole scenario: writes the input data, deploys the pipeline, checks the output.
+# The whole scenario: deploys the pipeline, feeds the input queue, checks the output, shuts down.
 #
 # Run after sourcing your env file (see the repo README):
-#   python3 scenario.py            # all three steps in order
-#   python3 scenario.py verify     # a single step, e.g. to re-check a pipeline already deployed
+#   python3 scenario.py                    # deploy → prepare → verify → stop
+#   python3 scenario.py verify             # one step on its own
+#   python3 scenario.py --flow-bin <path>  # runner binary to deploy
 
+import argparse
 import os
+import string
+import subprocess
 import sys
+import tempfile
+import time
 
 import yt.wrapper as yt
-from yt.wrapper.flow_commands import PipelineState, get_pipeline_state, wait_pipeline_state
+from yt.wrapper.flow_commands import PipelineState, get_pipeline_state, stop_pipeline, wait_pipeline_state
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "common"))
-from deploy import deploy as deploy_pipeline  # noqa: E402
+SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_FLOW_BIN = "~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server"
 
-SCENARIO = "message_filter"
-FOLDER = os.environ["YT_DEV_ROOT"] + "/" + SCENARIO
+FOLDER = os.environ["YT_DEV_ROOT"] + "/message_filter"
+PIPELINE = FOLDER + "/pipeline"
 
 # The two "bad" rows are the ones the pipeline must drop.
 ROWS = [
@@ -26,43 +32,68 @@ ROWS = [
 ]
 EXPECTED_KEYS = ["good_0", "good_1", "good_2"]
 
-COMPLETION_TIMEOUT = 600
+VERIFY_TIMEOUT = 300
+STOP_TIMEOUT = 150
 
 
-# The source is finite, so it reports itself empty as soon as it reaches the end of the queue —
-# a pipeline started against an empty queue completes before the rows arrive. Hence prepare first.
-def prepare():
+def deploy(args):
+    # The template's ${VAR} placeholders are string.Template syntax, so a missing variable fails
+    # right here naming itself. Only this cluster needs an internal proxy URL of its own.
+    env = dict(os.environ)
+    env.setdefault("YT_PROXY_INTERNAL", env["YT_PROXY"])
+    with open(os.path.join(SCENARIO_DIR, "pipeline.yson.template")) as template:
+        config = string.Template(template.read()).substitute(env)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".yson") as config_file:
+        config_file.write(config)
+        config_file.flush()
+        binary = os.path.expanduser(args.flow_bin)
+        subprocess.check_call([binary, "--config", config_file.name], env=dict(env, YT_FLOW_WAIT="0"))
+
+    print("pipeline state: {}".format(get_pipeline_state(PIPELINE)))
+
+
+def prepare(args):
     yt.insert_rows(FOLDER + "/input_queue", ROWS)
     print("inserted {} rows into {}/input_queue".format(len(ROWS), FOLDER))
 
 
-def deploy():
-    deploy_pipeline(SCENARIO)
+def verify(args):
+    deadline = time.time() + VERIFY_TIMEOUT
+    while True:
+        keys = sorted(row["key"] for row in yt.select_rows("key from [{}/output_queue]".format(FOLDER)))
+        if keys == EXPECTED_KEYS:
+            break
+        if time.time() > deadline:
+            sys.exit("FAIL: after {}s the output queue holds {}".format(VERIFY_TIMEOUT, keys))
+        time.sleep(5)
 
-
-def verify():
-    # Raises on timeout, and on anything else that keeps the state unreadable.
-    wait_pipeline_state(PipelineState.Completed, FOLDER + "/pipeline", wait_timeout=COMPLETION_TIMEOUT)
-    print("pipeline state: {}".format(get_pipeline_state(FOLDER + "/pipeline")))
-
-    keys = sorted(row["key"] for row in yt.select_rows("key from [{}/output_queue]".format(FOLDER)))
     print("output keys: {}".format(",".join(keys)))
-    if keys != EXPECTED_KEYS:
-        sys.exit("FAIL: unexpected keys")
     print("PASS: bad rows were filtered out")
 
 
-STEPS = {"prepare": prepare, "deploy": deploy, "verify": verify}
+def stop(args):
+    stop_pipeline(PIPELINE)
+    wait_pipeline_state(PipelineState.Stopped, PIPELINE, wait_timeout=STOP_TIMEOUT)
+    print("pipeline state: {}".format(get_pipeline_state(PIPELINE)))
+
+    # The runner records the vanilla operation it launched on the pipeline node.
+    alias = yt.get(PIPELINE + "/@current_vanilla_operation/alias")
+    yt.abort_operation(operation_alias=alias)
+    print("operation {} aborted".format(alias))
+
+
+STEPS = {"deploy": deploy, "prepare": prepare, "verify": verify, "stop": stop}
 
 
 def main():
-    if len(sys.argv) == 1:
-        for step in STEPS.values():
-            step()
-    elif len(sys.argv) == 2 and sys.argv[1] in STEPS:
-        STEPS[sys.argv[1]]()
-    else:
-        sys.exit("usage: scenario.py [{}]".format("|".join(STEPS)))
+    parser = argparse.ArgumentParser(description="Run the message_filter scenario.")
+    parser.add_argument("step", nargs="?", choices=list(STEPS), help="run this step alone")
+    parser.add_argument("--flow-bin", default=DEFAULT_FLOW_BIN, help="flow_server binary to deploy")
+    args = parser.parse_args()
+
+    for step in [STEPS[args.step]] if args.step else STEPS.values():
+        step(args)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 
 Re-implementations of YT Flow integration-test scenarios as standalone pipelines deployed to an
 opensource YTsaurus cluster with **vanilla operations only**. Each scenario dir is self-contained:
-pipeline spec, Cypress bootstrap, data preparation, deployment, and verification scripts.
+its pipeline spec, its Cypress bootstrap, and one `scenario.py` that deploys, feeds, checks and
+shuts the pipeline down.
 
 ## Prerequisites
 
@@ -12,8 +13,8 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
   same way. Build it **stripped** — the runner uploads its own executable to the cluster, and an
   unstripped profile build carries gigabytes of debug info.
 - **Run the scenarios on the host that built the binary.** Deployment ships that local executable to
-  the cluster's vanilla jobs, so it must be a Linux build from this machine; `FLOW_BINARY` points at
-  it (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
+  the cluster's vanilla jobs, so it must be a Linux build from this machine; `scenario.py --flow-bin`
+  points at it (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — the scripts drive
   the cluster through its client, and it also provides the `yt` CLI for poking around by hand.
 - The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
@@ -40,7 +41,7 @@ the scripts read these variables from the environment and nothing else. It must 
 |----------|---------|
 | `YT_TOKEN` | cluster token/password |
 | `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to |
-| `YT_PROXY_INTERNAL` | HTTP proxy URL reachable from inside the cluster (k8s service address) |
+| `YT_PROXY_INTERNAL` | *optional* — HTTP proxy URL reachable from **inside** the cluster; defaults to `YT_PROXY`, and only a cluster whose public address the vanilla jobs cannot resolve needs its own value (k8s service address) |
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
 | `YT_POOL` | scheduler pool for vanilla operations |
@@ -48,9 +49,10 @@ the scripts read these variables from the environment and nothing else. It must 
 
 ## Deployment model
 
-`common/deploy.py` runs the flow runner **on the dev host**: it connects over RPC, uploads the
-binary, submits the pipeline spec and launches the controller+worker vanilla operation, then exits
-(`YT_FLOW_WAIT=0`) instead of tailing the pipeline.
+A scenario's `deploy` step runs the flow runner **on the dev host**: it connects over RPC, uploads
+the binary, submits the pipeline spec and launches the controller+worker vanilla operation, then
+exits (`YT_FLOW_WAIT=0`) instead of tailing the pipeline. The runner config is the scenario's
+`pipeline.yson.template` with its `${VAR}` placeholders filled in from the environment.
 
 The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
 the runner config pins the reachable one instead of relying on proxy discovery:
@@ -73,9 +75,10 @@ Three cluster quirks every spec template accounts for:
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
 
-`cluster_url` stays the *internal* HTTP proxy: with discovery disabled it is never dialled, and
-everything the runner records in Cypress (the vanilla operation manifest) then stays valid for the
-in-cluster components that read it.
+`cluster_url` is the proxy the *in-cluster* components use: with discovery disabled the runner never
+dials it, but it is what ends up in Cypress (the vanilla operation manifest). On this cluster the
+public address is a NAT64-only name the vanilla jobs cannot resolve, which is why
+`YT_PROXY_INTERNAL` exists at all; anywhere else it stays unset and `YT_PROXY` serves both roles.
 
 ## Running a scenario
 
@@ -84,17 +87,14 @@ source env.sh              # your private env file, once per shell
 cd <scenario>
 
 python3 yt_sync.py         # Cypress objects (pip-installed yt_sync_mini)
-python3 scenario.py        # write input data, deploy the pipeline, assert the expected result
+python3 scenario.py        # deploy → write input data → assert the expected result → stop
 ```
 
-`scenario.py` also takes a single step name (`prepare`, `deploy`, `verify`) to re-run one of them
-on its own. Data is written **before** the pipeline starts: a finite source reports itself empty as
-soon as it reaches the end of its input, so a pipeline deployed against an empty queue completes
-before any row arrives.
-
-Non-finite scenarios are shut down with `python3 ../common/stop.py <scenario> <operation_id>`.
+`scenario.py` also takes a single step name (`deploy`, `prepare`, `verify`, `stop`) to run one of
+them on its own — handy for re-checking or shutting down a pipeline that is already deployed. The
+`stop` step aborts the vanilla operation by the alias the runner recorded on the pipeline node
+(`@current_vanilla_operation`), so there is no operation id to pass around.
 
 ## Layout
 
-- `common/` — the deploy/stop helpers shared by all scenarios.
-- `<scenario>/` — one dir per scenario.
+- `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`, `scenario.py`.
