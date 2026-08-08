@@ -28,14 +28,14 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
 
 ## Configuration — no secrets in this repo
 
-All cluster coordinates and credentials live in a private env file that git never sees: either
-`env.sh` at the repo root (gitignored, the default) or any path pointed to by `YT_FLOW_DEMO_ENV`.
-It must export:
+All cluster coordinates and credentials live in a private env file that git never sees — keep it at
+`env.sh` in the repo root, which is gitignored. Source it in your shell before running a scenario;
+the scripts read these variables from the environment and nothing else. It must export:
 
 | Variable | Meaning |
 |----------|---------|
 | `YT_TOKEN` | cluster token/password |
-| `YT_PROXY_EXTERNAL` | HTTP proxy URL reachable from your host |
+| `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to |
 | `YT_PROXY_INTERNAL` | HTTP proxy URL reachable from inside the cluster (k8s service address) |
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
@@ -76,18 +76,17 @@ in-cluster components that read it.
 ## Running a scenario
 
 ```bash
-export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
+source env.sh                    # your private env file, once per shell
 cd <scenario>
-source ../common/env.sh   # once: exports the cluster vars, incl. the yt CLI's YT_PROXY/YT_TOKEN
 
-python3 yt_sync.py        # Cypress objects (pip-installed yt_sync_mini)
-./prepare_data.sh         # write input data (if the scenario needs any)
+python3 yt_sync.py               # Cypress objects (pip-installed yt_sync_mini)
+python3 scenario.py prepare      # write input data (if the scenario needs any)
 ../common/deploy.sh <scenario>
-./verify.sh               # assert the original test's expected result
+python3 scenario.py verify       # assert the original test's expected result
 ../common/stop.sh <scenario> <operation_id>   # for non-finite pipelines
 ```
 
 ## Layout
 
-- `common/` — env loading and the deploy/stop scripts shared by all scenarios.
+- `common/` — the deploy/stop scripts shared by all scenarios.
 - `<scenario>/` — one dir per scenario.

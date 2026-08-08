@@ -14,9 +14,13 @@
 
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$REPO_ROOT/common/env.sh"
 
-[ -n "${YT_PROXY_RPC:-}" ] || { echo "error: YT_PROXY_RPC is not set by the env file" >&2; exit 1; }
+# The cluster coordinates come straight from the environment — source your env file first
+# (the repo README lists what it must export).
+for var in YT_TOKEN YT_PROXY YT_PROXY_INTERNAL YT_PROXY_RPC YT_CLUSTER_NAME YT_DEV_ROOT YT_POOL; do
+    [ -n "${!var:-}" ] || { echo "error: $var is not set; source your env file first" >&2; exit 1; }
+done
+command -v yt > /dev/null || { echo "error: the yt CLI is not on PATH (pip install ytsaurus-client)" >&2; exit 1; }
 
 SCENARIO=${1:?usage: deploy.sh <scenario_name>}
 SCENARIO_DIR="$REPO_ROOT/$SCENARIO"

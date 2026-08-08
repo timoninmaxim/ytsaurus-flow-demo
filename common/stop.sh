@@ -4,12 +4,10 @@
 # Usage: common/stop.sh <scenario_name> <operation_id>
 
 set -euo pipefail
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$REPO_ROOT/common/env.sh"
 
 SCENARIO=${1:?usage: stop.sh <scenario_name> <operation_id>}
 OP_ID=${2:?usage: stop.sh <scenario_name> <operation_id>}
-YTDIR="$YT_DEV_ROOT/$SCENARIO"
+YTDIR="${YT_DEV_ROOT:?source your env file first}/$SCENARIO"
 
 yt flow stop-pipeline "$YTDIR/pipeline" --sync --wait-timeout 150 || true
 echo "pipeline state: $(yt flow get-pipeline-state "$YTDIR/pipeline")"

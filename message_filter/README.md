@@ -16,18 +16,14 @@ This mirrors the original test's assertion `keys == ["good_0", "good_1", "good_2
 ## Run
 
 ```bash
-export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
-source ../common/env.sh     # once: exports the cluster vars, incl. the yt CLI's YT_PROXY/YT_TOKEN
+source ../env.sh                # your private env file, once per shell
 
-python3 yt_sync.py          # Cypress objects (pipeline node, input_queue + consumer, output_queue)
-                            # idempotent; re-run if it hits transient master lag
-./prepare_data.sh           # 5 rows: good_0, bad, good_1, bad, good_2
+python3 yt_sync.py              # Cypress objects (pipeline node, input_queue + consumer, output_queue)
+                                # idempotent; re-run if it hits transient master lag
+python3 scenario.py prepare     # 5 rows: good_0, bad, good_1, bad, good_2
 ../common/deploy.sh message_filter
-./verify.sh                 # waits for Completed, asserts output keys
+python3 scenario.py verify      # waits for Completed, asserts output keys
 ```
-
-Source `common/env.sh` once; the child scripts inherit its exported vars and drive the cluster
-through the `yt` CLI, so they run as plain `./scripts` with nothing else to source.
 
 The pipeline is finite — no `stop.sh` needed; abort the controller/worker vanilla operation after
 verification if you do not plan to inspect it.
@@ -41,7 +37,3 @@ cluster's real queue agent with no manual fixup. Executed end-to-end with the sc
 (`yt_sync.py` → `prepare_data.sh` → `deploy.sh` → `verify.sh`): pipeline reached `Working`,
 drained the input, finished `Completed`; `verify.sh` printed `output keys: good_0,good_1,good_2` /
 `PASS: bad rows were filtered out`.
-
-Re-run end to end on 2026-08-07 after the scripts moved to the `yt` CLI, with the same result.
-`yt_sync.py` needed one retry: right after the objects are recreated, `register_queue_consumer`
-can still resolve the queue to the previous object id and fail with `No such object`.
