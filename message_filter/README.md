@@ -16,16 +16,14 @@ This mirrors the original test's assertion `keys == ["good_0", "good_1", "good_2
 ## Run
 
 ```bash
-source ../env.sh                # your private env file, once per shell
+source ../env.sh           # your private env file, once per shell
 
-python3 yt_sync.py              # Cypress objects (pipeline node, input_queue + consumer, output_queue)
-                                # idempotent; re-run if it hits transient master lag
-python3 scenario.py prepare     # 5 rows: good_0, bad, good_1, bad, good_2
-../common/deploy.sh message_filter
-python3 scenario.py verify      # waits for Completed, asserts output keys
+python3 yt_sync.py         # Cypress objects (pipeline node, input_queue + consumer, output_queue)
+                           # idempotent; re-run if it hits transient master lag
+python3 scenario.py        # 5 rows (good_0, bad, good_1, bad, good_2) → deploy → assert output keys
 ```
 
-The pipeline is finite — no `stop.sh` needed; abort the controller/worker vanilla operation after
+The pipeline is finite — no `stop.py` needed; abort the controller/worker vanilla operation after
 verification if you do not plan to inspect it.
 
 ## Run record (2026-07-30)

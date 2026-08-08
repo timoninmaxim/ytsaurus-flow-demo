@@ -1,8 +1,8 @@
-# Writes the scenario's input data and checks the filtered output.
+# Runs the whole scenario: writes the input data, deploys the pipeline, checks the output.
 #
 # Run after sourcing your env file (see the repo README):
-#   python3 scenario.py prepare   # 5 rows: good_0, bad, good_1, bad, good_2
-#   python3 scenario.py verify    # waits for Completed, asserts the output keys
+#   python3 scenario.py            # all three steps in order
+#   python3 scenario.py verify     # a single step, e.g. to re-check a pipeline already deployed
 
 import os
 import sys
@@ -10,7 +10,11 @@ import sys
 import yt.wrapper as yt
 from yt.wrapper.flow_commands import PipelineState, get_pipeline_state, wait_pipeline_state
 
-FOLDER = os.environ["YT_DEV_ROOT"] + "/message_filter"
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "common"))
+from deploy import deploy as deploy_pipeline  # noqa: E402
+
+SCENARIO = "message_filter"
+FOLDER = os.environ["YT_DEV_ROOT"] + "/" + SCENARIO
 
 # The two "bad" rows are the ones the pipeline must drop.
 ROWS = [
@@ -25,9 +29,15 @@ EXPECTED_KEYS = ["good_0", "good_1", "good_2"]
 COMPLETION_TIMEOUT = 600
 
 
+# The source is finite, so it reports itself empty as soon as it reaches the end of the queue —
+# a pipeline started against an empty queue completes before the rows arrive. Hence prepare first.
 def prepare():
     yt.insert_rows(FOLDER + "/input_queue", ROWS)
     print("inserted {} rows into {}/input_queue".format(len(ROWS), FOLDER))
+
+
+def deploy():
+    deploy_pipeline(SCENARIO)
 
 
 def verify():
@@ -42,13 +52,17 @@ def verify():
     print("PASS: bad rows were filtered out")
 
 
-COMMANDS = {"prepare": prepare, "verify": verify}
+STEPS = {"prepare": prepare, "deploy": deploy, "verify": verify}
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in COMMANDS:
-        sys.exit("usage: scenario.py {{{}}}".format("|".join(COMMANDS)))
-    COMMANDS[sys.argv[1]]()
+    if len(sys.argv) == 1:
+        for step in STEPS.values():
+            step()
+    elif len(sys.argv) == 2 and sys.argv[1] in STEPS:
+        STEPS[sys.argv[1]]()
+    else:
+        sys.exit("usage: scenario.py [{}]".format("|".join(STEPS)))
 
 
 if __name__ == "__main__":

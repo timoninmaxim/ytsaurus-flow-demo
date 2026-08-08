@@ -8,10 +8,14 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
 
 - An opensource YTsaurus cluster reachable over its HTTP proxy.
 - The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo
-  (`ya make --build=profile yt/yt/flow/bin/flow_server`); scenarios with custom C++ code build their
-  own binary the same way.
-- Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`), which also provides
-  the `yt` CLI the scripts drive the cluster with.
+  (`ya make yt/yt/flow/bin/flow_server`); scenarios with custom C++ code build their own binary the
+  same way. Build it **stripped** — the runner uploads its own executable to the cluster, and an
+  unstripped profile build carries gigabytes of debug info.
+- **Run the scenarios on the host that built the binary.** Deployment ships that local executable to
+  the cluster's vanilla jobs, so it must be a Linux build from this machine; `FLOW_BINARY` points at
+  it (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
+- Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — the scripts drive
+  the cluster through its client, and it also provides the `yt` CLI for poking around by hand.
 - The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
   [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
 
@@ -44,9 +48,9 @@ the scripts read these variables from the environment and nothing else. It must 
 
 ## Deployment model
 
-`common/deploy.sh` runs the flow runner **on the dev host**: it connects over RPC, uploads the
-(stripped) binary, submits the pipeline spec and launches the controller+worker vanilla operation,
-then exits (`YT_FLOW_WAIT=0`) instead of tailing the pipeline.
+`common/deploy.py` runs the flow runner **on the dev host**: it connects over RPC, uploads the
+binary, submits the pipeline spec and launches the controller+worker vanilla operation, then exits
+(`YT_FLOW_WAIT=0`) instead of tailing the pipeline.
 
 The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
 the runner config pins the reachable one instead of relying on proxy discovery:
@@ -76,17 +80,21 @@ in-cluster components that read it.
 ## Running a scenario
 
 ```bash
-source env.sh                    # your private env file, once per shell
+source env.sh              # your private env file, once per shell
 cd <scenario>
 
-python3 yt_sync.py               # Cypress objects (pip-installed yt_sync_mini)
-python3 scenario.py prepare      # write input data (if the scenario needs any)
-../common/deploy.sh <scenario>
-python3 scenario.py verify       # assert the original test's expected result
-../common/stop.sh <scenario> <operation_id>   # for non-finite pipelines
+python3 yt_sync.py         # Cypress objects (pip-installed yt_sync_mini)
+python3 scenario.py        # write input data, deploy the pipeline, assert the expected result
 ```
+
+`scenario.py` also takes a single step name (`prepare`, `deploy`, `verify`) to re-run one of them
+on its own. Data is written **before** the pipeline starts: a finite source reports itself empty as
+soon as it reaches the end of its input, so a pipeline deployed against an empty queue completes
+before any row arrives.
+
+Non-finite scenarios are shut down with `python3 ../common/stop.py <scenario> <operation_id>`.
 
 ## Layout
 
-- `common/` — the deploy/stop scripts shared by all scenarios.
+- `common/` — the deploy/stop helpers shared by all scenarios.
 - `<scenario>/` — one dir per scenario.
