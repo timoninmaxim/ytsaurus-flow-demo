@@ -22,10 +22,11 @@ the spec (ships itself via `vanilla/worker/local_files`, points the `CompanionMa
 Opensource has no PY3_PROGRAM, and the job image carries only a bare python3.8, so this scenario
 does the same thing in two explicit pieces:
 
-- `build.sh` packages `companion_bundle.tgz` on the dev host: proto stubs generated with
-  `grpcio-tools` from the checkout, dependencies (`grpcio`, `protobuf`, `ytsaurus-client`)
-  resolved for the **job's** python (3.8, manylinux2014), the companion SDK sources, and
-  `main.py`.
+- `build.sh` packages `companion_bundle.tgz` on the dev host: a self-contained CPython runtime
+  (the job image's python3.8 is too old for the SDK), the **`ytsaurus-flow-companion`** package —
+  built as a wheel from `yt/yt/flow/tools/companion` in the checkout, it carries the SDK, the
+  generated companion-protocol proto stubs, and the pinned gRPC/protobuf toolchain — with its
+  dependencies resolved for the bundled runtime, and `main.py`.
 - `pipeline.yson.template` states what the Arcadia runner would have patched in: the two
   `local_files` (the `py_companion` wrapper script + the bundle) and
   `entrypoint = {executable = "./py_companion"}` on the `CompanionManager` resource. The host
@@ -74,7 +75,11 @@ Recorded output (2026-08-10, ytdemo):
 ```json
 {"$$tablet_index":0,"$$row_index":0,"key":"a","text":"hello flow","count":1,"score":0.5,"flag":true,"text_upper":"HELLO FLOW","$$timestamp":1918092881768218632,"$$cumulative_data_weight":55}
 {"$$tablet_index":0,"$$row_index":1,"key":"b","text":"python companion","count":-7,"score":2.25,"flag":false,"text_upper":"PYTHON COMPANION","$$timestamp":1918092881768218632,"$$cumulative_data_weight":122}
+{"$$tablet_index":0,"$$row_index":3,"key":"pip","text":"from pip package","count":100,"score":3.5,"flag":true,"text_upper":"FROM PIP PACKAGE","$$timestamp":1918123893579579418,"$$cumulative_data_weight":250}
 ```
+
+(The last row was produced by a later run whose bundle was built from the `ytsaurus-flow-companion`
+package.)
 
 The rows had been inserted while an earlier deploy's companion was still crash-looping and were
 delivered exactly once by the fixed deploy — nothing lost, nothing duplicated across the restarts.
