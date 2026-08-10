@@ -11,11 +11,14 @@ reading its output are plain `yt` CLI commands from the scenario README.
   (`YT_PROXY`) for Cypress and queue work, and an RPC proxy (`YT_PROXY_RPC`) — the runner deploys
   over RPC.
 - The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
-  `./ya make --build=release yt/yt/flow/bin/flow_server` from the checkout root; scenarios with
-  custom C++ code build their own binary the same way. **Strip it** (`strip -o flow_server.stripped
-  flow_server`) — the runner uploads the executable on every deploy, and the unstripped build is
-  gigabytes. `run.sh` takes the path from the `FLOW_BIN` env var
+  `./ya make --build=release yt/yt/flow/bin/flow_server` from the checkout root. **Strip it**
+  (`strip -o flow_server.stripped flow_server`) — the runner uploads the executable on every deploy,
+  and the unstripped build is gigabytes. `run.sh` takes the path from the `FLOW_BIN` env var
   (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
+
+  Scenarios are written to run on that stock binary. The single deliberate exception is
+  `secret_env`, whose subject is the job process itself: it ships its own C++ and its own
+  `build.sh`, which builds and strips a binary of its own (see its README).
 - **Run the scenarios on the host that built the binary.** Deployment ships that local executable to
   the cluster's vanilla jobs, so it must be a Linux build from this machine.
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — it provides the
@@ -44,7 +47,7 @@ the scripts read these variables from the environment and nothing else. It must 
 |----------|---------|
 | `YT_TOKEN` | cluster token/password |
 | `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to |
-| `YT_PROXY_INTERNAL` | *optional* — HTTP proxy URL reachable from **inside** the cluster; defaults to `YT_PROXY`, and only a cluster whose public address the vanilla jobs cannot resolve needs its own value (k8s service address) |
+| `YT_PROXY_INTERNAL` | HTTP proxy URL reachable from **inside** the cluster — set it to `YT_PROXY` unless the vanilla jobs cannot resolve the public address (then use the k8s service address). Required: `run.sh` substitutes every `${VAR}` in the spec template and fails on an unset one |
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
 | `YT_POOL` | scheduler pool for vanilla operations |
@@ -96,4 +99,5 @@ scenario's README shows the exact commands. When done, `./stop.sh` shuts the pip
 ## Layout
 
 - `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`, `run.sh`,
-  `stop.sh`.
+  `stop.sh`; a scenario that builds a binary of its own adds `pipeline/` (C++ sources) and
+  `build.sh`.
