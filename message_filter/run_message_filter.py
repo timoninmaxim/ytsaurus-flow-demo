@@ -1,15 +1,13 @@
-# The whole scenario: deploys the pipeline, feeds the input queue, checks the output, shuts down.
+# The message_filter demo: deploys the pipeline, feeds the input queue, tails the output.
 #
-# Run after sourcing your env file (see the repo README):
-#   python3 scenario.py                    # deploy → prepare → verify → stop
-#   python3 scenario.py verify             # one step on its own
-#   python3 scenario.py --flow-bin <path>  # runner binary to deploy
+#   python3 run_message_filter.py                    # deploy → prepare → tail
+#   python3 run_message_filter.py stop               # shut the pipeline and its operation down
+#   python3 run_message_filter.py --flow-bin <path>  # runner binary to deploy
 
 import argparse
 import os
 import string
 import subprocess
-import sys
 import tempfile
 import time
 
@@ -22,23 +20,28 @@ DEFAULT_FLOW_BIN = "~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server"
 FOLDER = os.environ["YT_DEV_ROOT"] + "/message_filter"
 PIPELINE = FOLDER + "/pipeline"
 
+# Queue rows are read and written in JSON, which keeps the demo to a single pip package: the
+# client's default structured format needs the separate `ytsaurus-yson` bindings. JSON encodes a
+# leading "$" in a column name as "$$".
+ROW_FORMAT = "json"
+
 # The two "bad" rows are the ones the pipeline must drop.
 ROWS = [
-    {"key": "good_0", "data": "0", "$tablet_index": 0},
-    {"key": "bad", "data": "1", "$tablet_index": 0},
-    {"key": "good_1", "data": "2", "$tablet_index": 0},
-    {"key": "bad", "data": "3", "$tablet_index": 0},
-    {"key": "good_2", "data": "4", "$tablet_index": 0},
+    {"key": "good_0", "data": "0", "$$tablet_index": 0},
+    {"key": "bad", "data": "1", "$$tablet_index": 0},
+    {"key": "good_1", "data": "2", "$$tablet_index": 0},
+    {"key": "bad", "data": "3", "$$tablet_index": 0},
+    {"key": "good_2", "data": "4", "$$tablet_index": 0},
 ]
-EXPECTED_KEYS = ["good_0", "good_1", "good_2"]
 
-VERIFY_TIMEOUT = 300
+POLL_PERIOD = 2
 STOP_TIMEOUT = 150
 
 
 def deploy(args):
     # The template's ${VAR} placeholders are string.Template syntax, so a missing variable fails
-    # right here naming itself. Only this cluster needs an internal proxy URL of its own.
+    # right here naming itself. Only a cluster whose public address the jobs cannot resolve needs
+    # an internal proxy URL of its own.
     env = dict(os.environ)
     env.setdefault("YT_PROXY_INTERNAL", env["YT_PROXY"])
     with open(os.path.join(SCENARIO_DIR, "pipeline.yson.template")) as template:
@@ -54,22 +57,24 @@ def deploy(args):
 
 
 def prepare(args):
-    yt.insert_rows(FOLDER + "/input_queue", ROWS)
+    yt.insert_rows(FOLDER + "/input_queue", ROWS, format=ROW_FORMAT)
     print("inserted {} rows into {}/input_queue".format(len(ROWS), FOLDER))
 
 
-def verify(args):
-    deadline = time.time() + VERIFY_TIMEOUT
-    while True:
-        keys = sorted(row["key"] for row in yt.select_rows("key from [{}/output_queue]".format(FOLDER)))
-        if keys == EXPECTED_KEYS:
-            break
-        if time.time() > deadline:
-            sys.exit("FAIL: after {}s the output queue holds {}".format(VERIFY_TIMEOUT, keys))
-        time.sleep(5)
+def tail(args):
+    print("tailing {}/output_queue, Ctrl-C to stop".format(FOLDER), flush=True)
 
-    print("output keys: {}".format(",".join(keys)))
-    print("PASS: bad rows were filtered out")
+    # Nothing consumes the output queue, so it is never trimmed and the offset is just a row count.
+    offset = 0
+    try:
+        while True:
+            rows = list(yt.pull_queue(FOLDER + "/output_queue", offset, partition_index=0, format=ROW_FORMAT))
+            for row in rows:
+                print("{}\t{}".format(row["key"], row["data"]), flush=True)
+            offset += len(rows)
+            time.sleep(POLL_PERIOD)
+    except KeyboardInterrupt:
+        print()
 
 
 def stop(args):
@@ -83,7 +88,8 @@ def stop(args):
     print("operation {} aborted".format(alias))
 
 
-STEPS = {"deploy": deploy, "prepare": prepare, "verify": verify, "stop": stop}
+STEPS = {"deploy": deploy, "prepare": prepare, "tail": tail, "stop": stop}
+DEFAULT_STEPS = ["deploy", "prepare", "tail"]
 
 
 def main():
@@ -92,8 +98,8 @@ def main():
     parser.add_argument("--flow-bin", default=DEFAULT_FLOW_BIN, help="flow_server binary to deploy")
     args = parser.parse_args()
 
-    for step in [STEPS[args.step]] if args.step else STEPS.values():
-        step(args)
+    for name in [args.step] if args.step else DEFAULT_STEPS:
+        STEPS[name](args)
 
 
 if __name__ == "__main__":

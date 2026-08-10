@@ -9,18 +9,16 @@ the stock `flow_server`): `reader` (`TSwiftPassthroughOrderedSourceComputation` 
 `skip_if_expression = 'key = "bad"'` on the reader, so blacklisted rows are dropped at the source.
 
 **Expected result.** The output queue receives only the keys `good_0`, `good_1`, `good_2` — the two
-`bad` rows are filtered out. This mirrors the original test's assertion
-`keys == ["good_0", "good_1", "good_2"]`.
+`bad` rows are filtered out.
 
 ## Run
 
 ```bash
-source ../env.sh           # your private env file, once per shell
-
-python3 yt_sync.py         # Cypress objects (pipeline node, input_queue + consumer, output_queue)
-                           # idempotent; re-run if it hits transient master lag
-python3 scenario.py        # deploy → 5 rows (good_0, bad, good_1, bad, good_2) → check → stop
+python3 yt_sync.py               # Cypress objects (pipeline node, input_queue + consumer, output_queue)
+python3 run_message_filter.py    # deploy → 5 rows (good_0, bad, good_1, bad, good_2) → tail the output
+python3 run_message_filter.py stop
 ```
 
-The source is not finite, so the pipeline keeps running until the `stop` step shuts it down and
-aborts its vanilla operation.
+The tail prints every row reaching the output queue, so the `bad` rows are visible by their absence.
+The source is not finite: the pipeline keeps running until the explicit `stop` step shuts it down
+and aborts its vanilla operation.

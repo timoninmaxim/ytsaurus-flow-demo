@@ -2,19 +2,20 @@
 
 Re-implementations of YT Flow integration-test scenarios as standalone pipelines deployed to an
 opensource YTsaurus cluster with **vanilla operations only**. Each scenario dir is self-contained:
-its pipeline spec, its Cypress bootstrap, and one `scenario.py` that deploys, feeds, checks and
-shuts the pipeline down.
+its pipeline spec, its Cypress bootstrap, and one `run_<scenario>.py` that deploys the pipeline,
+feeds it, and tails its output.
 
 ## Prerequisites
 
-- An opensource YTsaurus cluster reachable over its HTTP proxy.
-- The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo
-  (`ya make yt/yt/flow/bin/flow_server`); scenarios with custom C++ code build their own binary the
-  same way. Build it **stripped** — the runner uploads its own executable to the cluster, and an
-  unstripped profile build carries gigabytes of debug info.
+- An opensource YTsaurus cluster reachable from your host over **both** proxies: the HTTP proxy for
+  Cypress and queue work, and an RPC proxy — the runner deploys over RPC (`YT_PROXY_RPC`).
+- The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
+  `./ya make --build=release yt/yt/flow/bin/flow_server` from the checkout root; scenarios with
+  custom C++ code build their own binary the same way. Keep it free of debug info — a debug or
+  profile build is gigabytes, and the runner uploads the executable on every deploy.
 - **Run the scenarios on the host that built the binary.** Deployment ships that local executable to
-  the cluster's vanilla jobs, so it must be a Linux build from this machine; `scenario.py --flow-bin`
-  points at it (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
+  the cluster's vanilla jobs, so it must be a Linux build from this machine; `--flow-bin` points at
+  it (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — the scripts drive
   the cluster through its client, and it also provides the `yt` CLI for poking around by hand.
 - The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
@@ -87,14 +88,15 @@ source env.sh              # your private env file, once per shell
 cd <scenario>
 
 python3 yt_sync.py         # Cypress objects (pip-installed yt_sync_mini)
-python3 scenario.py        # deploy → write input data → assert the expected result → stop
+python3 run_<scenario>.py  # deploy → write input data → tail the output
 ```
 
-`scenario.py` also takes a single step name (`deploy`, `prepare`, `verify`, `stop`) to run one of
-them on its own — handy for re-checking or shutting down a pipeline that is already deployed. The
-`stop` step aborts the vanilla operation by the alias the runner recorded on the pipeline node
+`run_<scenario>.py` also takes a single step name to run one step on its own — `deploy`, `prepare`,
+`tail`, or `stop`. Shutting the pipeline down is always explicit: `stop` is never part of a plain
+run. It aborts the vanilla operation by the alias the runner recorded on the pipeline node
 (`@current_vanilla_operation`), so there is no operation id to pass around.
 
 ## Layout
 
-- `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`, `scenario.py`.
+- `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`,
+  `run_<scenario>.py`.
