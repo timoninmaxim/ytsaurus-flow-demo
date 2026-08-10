@@ -1,16 +1,25 @@
 # ytsaurus-flow-demo
 
-Re-implementations of YT Flow integration-test scenarios as standalone pipelines deployed to an
-opensource YTsaurus cluster with **vanilla operations only**. Each scenario dir is self-contained:
-pipeline spec, Cypress bootstrap, data preparation, deployment, and verification scripts.
+Standalone YT Flow demo pipelines deployed to an opensource YTsaurus cluster with **vanilla
+operations only**. Each scenario dir is self-contained:
+its pipeline spec, its Cypress bootstrap, and a `run.sh`/`stop.sh` pair; feeding the pipeline and
+reading its output are plain `yt` CLI commands from the scenario README.
 
 ## Prerequisites
 
-- An opensource YTsaurus cluster reachable over its HTTP proxy.
-- The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo
-  (`ya make --build=profile yt/yt/flow/bin/flow_server`); scenarios with custom C++ code build their
-  own binary the same way.
-- Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`).
+- An opensource YTsaurus cluster reachable from your host over **both** proxies: the HTTP proxy
+  (`YT_PROXY`) for Cypress and queue work, and an RPC proxy (`YT_PROXY_RPC`) — the runner deploys
+  over RPC.
+- The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
+  `./ya make --build=release yt/yt/flow/bin/flow_server` from the checkout root; scenarios with
+  custom C++ code build their own binary the same way. **Strip it** (`strip -o flow_server.stripped
+  flow_server`) — the runner uploads the executable on every deploy, and the unstripped build is
+  gigabytes. `run.sh` takes the path from the `FLOW_BIN` env var
+  (default: `~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server`).
+- **Run the scenarios on the host that built the binary.** Deployment ships that local executable to
+  the cluster's vanilla jobs, so it must be a Linux build from this machine.
+- Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — it provides the
+  `yt` CLI the scenarios are driven with.
 - The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
   [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
 
@@ -24,19 +33,18 @@ pipeline spec, Cypress bootstrap, data preparation, deployment, and verification
   ```bash
   pip install "ytsaurus-flow-yt-sync-mini @ git+https://github.com/ytsaurus/ytsaurus.git#subdirectory=yt/yt/flow/tools/yt_sync_mini"
   ```
-- `curl`.
 
 ## Configuration — no secrets in this repo
 
-All cluster coordinates and credentials live in a private env file that git never sees: either
-`env.sh` at the repo root (gitignored, the default) or any path pointed to by `YT_FLOW_DEMO_ENV`.
-It must export:
+All cluster coordinates and credentials live in a private env file that git never sees — keep it at
+`env.sh` in the repo root, which is gitignored. Source it in your shell before running a scenario;
+the scripts read these variables from the environment and nothing else. It must export:
 
 | Variable | Meaning |
 |----------|---------|
 | `YT_TOKEN` | cluster token/password |
-| `YT_PROXY_EXTERNAL` | HTTP proxy URL reachable from your host |
-| `YT_PROXY_INTERNAL` | HTTP proxy URL reachable from inside the cluster (k8s service address) |
+| `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to |
+| `YT_PROXY_INTERNAL` | *optional* — HTTP proxy URL reachable from **inside** the cluster; defaults to `YT_PROXY`, and only a cluster whose public address the vanilla jobs cannot resolve needs its own value (k8s service address) |
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
 | `YT_POOL` | scheduler pool for vanilla operations |
@@ -44,9 +52,12 @@ It must export:
 
 ## Deployment model
 
-`common/deploy.sh` runs the flow runner **on the dev host**: it connects over RPC, uploads the
-(stripped) binary, submits the pipeline spec and launches the controller+worker vanilla operation,
-then exits (`YT_FLOW_WAIT=0`) instead of tailing the pipeline.
+A scenario's `run.sh` renders `pipeline.yson.template` (substituting `${VAR}`s from the
+environment) and runs the flow runner **on the dev host**: it connects over RPC, uploads the
+binary, submits the pipeline spec and launches the controller+worker vanilla operation, then
+streams the controller log to the terminal. Ctrl-C only detaches — the pipeline keeps running on
+the cluster until `stop.sh` stops it and aborts the vanilla operation (by the alias the runner
+recorded in `@current_vanilla_operation` on the pipeline node).
 
 The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
 the runner config pins the reachable one instead of relying on proxy discovery:
@@ -69,25 +80,20 @@ Three cluster quirks every spec template accounts for:
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
 
-`cluster_url` stays the *internal* HTTP proxy: with discovery disabled it is never dialled, and
-everything the runner records in Cypress (the vanilla operation manifest) then stays valid for the
-in-cluster components that read it.
-
 ## Running a scenario
 
 ```bash
-export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
+source env.sh              # your private env file, once per shell
 cd <scenario>
-source ../common/env.sh   # once: exports cluster vars + ytcurl/ytget/... helpers
 
-python3 yt_sync.py        # Cypress objects (pip-installed yt_sync_mini)
-./prepare_data.sh         # write input data (if the scenario needs any)
-../common/deploy.sh <scenario>
-./verify.sh               # assert the original test's expected result
-../common/stop.sh <scenario> <operation_id>   # for non-finite pipelines
+python3 yt_sync.py         # once: Cypress objects (pip-installed yt_sync_mini)
+./run.sh                   # deploy + stream the controller log; Ctrl-C detaches
 ```
+
+Then feed the pipeline and watch its output from a second terminal with the `yt` CLI — each
+scenario's README shows the exact commands. When done, `./stop.sh` shuts the pipeline down.
 
 ## Layout
 
-- `common/` — env loading, curl API helpers, deploy/stop scripts shared by all scenarios.
-- `<scenario>/` — one dir per scenario.
+- `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`, `run.sh`,
+  `stop.sh`.

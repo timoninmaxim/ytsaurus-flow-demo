@@ -1,7 +1,7 @@
 # Creates the Cypress objects for the message_filter scenario: the pipeline
 # node, the input queue with its consumer, and the output queue.
 #
-# Run after loading the cluster env (source common/env.sh):
+# Run after sourcing your env file (see the repo README):
 #   python3 yt_sync.py
 # Requires the pip-installed yt_sync_mini + pipeline_tables packages
 # (see the repo README). The ensure flow is idempotent.
@@ -17,14 +17,14 @@ QUEUE_SCHEMA = [
     {"name": "$cumulative_data_weight", "type": "int64"},
 ]
 
-CLUSTER = os.environ["YT_PROXY_EXTERNAL"]
+CLUSTER = os.environ["YT_PROXY"]
 FOLDER = os.environ["YT_DEV_ROOT"] + "/message_filter"
 
 
 def main():
     stages = {
         "default": {},
-        "test": {
+        "demo": {
             "folder": FOLDER,
             "presets": {
                 "builtin:storage_preset": {"clusters": {CLUSTER: {"attributes": {"primary_medium": "default"}}}},
@@ -66,7 +66,7 @@ def main():
     run_yt_sync_easy_mode(
         "message_filter",
         StagesSpec(stages=stages, pipelines=pipelines, tables=tables, consumers=consumers),
-        args=["--stage", "test", "--scenario", "ensure", "--parallel-factor", "0", "--commit"],
+        args=["--stage", "demo", "--scenario", "ensure", "--parallel-factor", "0", "--commit"],
     )
 
 

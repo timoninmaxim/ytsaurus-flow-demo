@@ -21,7 +21,7 @@
                         "parameters" = {
                             "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/message_filter/input_queue";
                             "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/message_filter/consumer";
-                            "finite" = %true;
+                            "finite" = %false;
                         };
                     };
                 };

@@ -1,43 +1,30 @@
 # message_filter
 
-Re-implementation of the `yt/yt/flow/tests/message_filter` integration test as a standalone
-vanilla-deployed pipeline.
-
-**Scenario.** A queue-to-queue pipeline built entirely from stock classes (the pipeline binary is
-the stock `flow_server`): `reader` (`TSwiftPassthroughOrderedSourceComputation` over
-`TQueueSource`, finite) → `writer` (`TPassthroughComputation`) → `TSyncQueueSink`. The dynamic
-spec sets `skip_if_expression = 'key = "bad"'` on the reader, so blacklisted rows are dropped at
-the source.
-
-**Expected result.** The pipeline drains the input queue and reaches `Completed`; the output
-queue contains only the keys `good_0`, `good_1`, `good_2` (the two `bad` rows are filtered out).
-This mirrors the original test's assertion `keys == ["good_0", "good_1", "good_2"]`.
+A queue-to-queue pipeline built entirely from stock classes (the pipeline binary is the stock
+`flow_server`):
+`reader` (`TSwiftPassthroughOrderedSourceComputation` over `TQueueSource`) → `writer`
+(`TPassthroughComputation`) → `TSyncQueueSink`. The dynamic spec sets
+`skip_if_expression = 'key = "bad"'` on the reader, so blacklisted rows are dropped at the source.
 
 ## Run
 
-```bash
-export YT_FLOW_DEMO_ENV=~/path/to/your/env.sh
-source ../common/env.sh     # once: exports cluster vars + ytcurl/ytget/... helpers
+Terminal 1 — bootstrap once, then run the pipeline:
 
-python3 yt_sync.py          # Cypress objects (pipeline node, input_queue + consumer, output_queue)
-                            # idempotent; re-run if it hits transient master lag
-./prepare_data.sh           # 5 rows: good_0, bad, good_1, bad, good_2
-../common/deploy.sh message_filter
-./verify.sh                 # waits for Completed, asserts output keys
+```bash
+python3 yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
+./run.sh             # deploy + stream the controller log; Ctrl-C detaches, ./stop.sh stops
 ```
 
-Source `common/env.sh` once; the child scripts inherit its exported vars and `ytput`/`ytget`
-helpers (env.sh `export -f`s them), so they run as plain `./scripts` with nothing else to source.
+Terminal 2 — feed the input queue and watch the output:
 
-The pipeline is finite — no `stop.sh` needed; abort the controller/worker vanilla operation after
-verification if you do not plan to inspect it.
+```bash
+echo '{"key": "good_0", "data": "0"}
+{"key": "bad",    "data": "1"}
+{"key": "good_1", "data": "2"}' | yt insert-rows --format json "$YT_DEV_ROOT/message_filter/input_queue"
 
-## Run record (2026-07-30)
+yt pull-queue "$YT_DEV_ROOT/message_filter/output_queue" --offset 0 --partition-index 0 --format json
+```
 
-Re-run from scratch on a freshly cleaned cluster (old objects, consumer registration, and vanilla
-operation removed first), with the Cypress bootstrap driven by the pip-installed `yt_sync_mini` /
-`pipeline_tables` packages instead of a vendored copy. The consumer registration went through the
-cluster's real queue agent with no manual fixup. Executed end-to-end with the scripts in this dir
-(`yt_sync.py` → `prepare_data.sh` → `deploy.sh` → `verify.sh`): pipeline reached `Working`,
-drained the input, finished `Completed`; `verify.sh` printed `output keys: good_0,good_1,good_2` /
-`PASS: bad rows were filtered out`.
+Only the `good_*` rows come back — the `bad` row is dropped by the filter. Insert more rows and
+pull again: nothing consumes the output queue, so `--offset` is just a row count and `0` always
+shows everything.
