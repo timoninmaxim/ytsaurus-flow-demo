@@ -1,14 +1,15 @@
 # ytsaurus-flow-demo
 
-Re-implementations of YT Flow integration-test scenarios as standalone pipelines deployed to an
-opensource YTsaurus cluster with **vanilla operations only**. Each scenario dir is self-contained:
+Standalone YT Flow demo pipelines deployed to an opensource YTsaurus cluster with **vanilla
+operations only**. Each scenario dir is self-contained:
 its pipeline spec, its Cypress bootstrap, and a `run.sh`/`stop.sh` pair; feeding the pipeline and
 reading its output are plain `yt` CLI commands from the scenario README.
 
 ## Prerequisites
 
-- An opensource YTsaurus cluster reachable from your host over **both** proxies: the HTTP proxy for
-  Cypress and queue work, and an RPC proxy — the runner deploys over RPC (`YT_PROXY_RPC`).
+- An opensource YTsaurus cluster reachable from your host over **both** proxies: the HTTP proxy
+  (`YT_PROXY`) for Cypress and queue work, and an RPC proxy (`YT_PROXY_RPC`) — the runner deploys
+  over RPC.
 - The `flow_server` binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
   `./ya make --build=release yt/yt/flow/bin/flow_server` from the checkout root; scenarios with
   custom C++ code build their own binary the same way. **Strip it** (`strip -o flow_server.stripped
@@ -42,7 +43,7 @@ the scripts read these variables from the environment and nothing else. It must 
 | Variable | Meaning |
 |----------|---------|
 | `YT_TOKEN` | cluster token/password |
-| `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to. Use the **https** URL if the balancer redirects http to https: clients following the redirect resend writes without the body, so every write silently writes nothing |
+| `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to |
 | `YT_PROXY_INTERNAL` | *optional* — HTTP proxy URL reachable from **inside** the cluster; defaults to `YT_PROXY`, and only a cluster whose public address the vanilla jobs cannot resolve needs its own value (k8s service address) |
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
@@ -57,12 +58,6 @@ binary, submits the pipeline spec and launches the controller+worker vanilla ope
 streams the controller log to the terminal. Ctrl-C only detaches — the pipeline keeps running on
 the cluster until `stop.sh` stops it and aborts the vanilla operation (by the alias the runner
 recorded in `@current_vanilla_operation` on the pipeline node).
-
-The controller must run **in-cluster**: every Flow client command (the runner's spec push,
-`yt flow get-pipeline-state`, …) is relayed by the cluster's proxies to the pipeline controller,
-so the cluster must be able to dial the controller's advertised address. A NAT'd dev host has no
-such reverse route — running the controller locally (`YT_FLOW_MODE=controller+worker`) only works
-when the cluster can connect back to the host.
 
 The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
 the runner config pins the reachable one instead of relying on proxy discovery:

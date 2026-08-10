@@ -1,7 +1,7 @@
 # message_filter
 
-Re-implementation of the `yt/yt/flow/tests/message_filter` integration test as a standalone
-pipeline built entirely from stock classes (the pipeline binary is the stock `flow_server`):
+A queue-to-queue pipeline built entirely from stock classes (the pipeline binary is the stock
+`flow_server`):
 `reader` (`TSwiftPassthroughOrderedSourceComputation` over `TQueueSource`) → `writer`
 (`TPassthroughComputation`) → `TSyncQueueSink`. The dynamic spec sets
 `skip_if_expression = 'key = "bad"'` on the reader, so blacklisted rows are dropped at the source.
