@@ -18,8 +18,8 @@ reading its output are plain `yt` CLI commands from the scenario README.
 
   Scenarios are written to run on that stock binary. The single deliberate exception is
   `secret_env`, whose subject is the job process itself: it ships its own C++ and its own
-  `build.sh`, which builds and strips a binary of its own (see its README). `run.sh` deploys a
-  `*.stripped` binary found in the scenario dir in preference to the stock one.
+  `build.sh`, which builds and strips a binary of its own; its README passes that binary in
+  `FLOW_BIN`.
 - **Run the scenarios on the host that built the binary.** Deployment ships that local executable to
   the cluster's vanilla jobs, so it must be a Linux build from this machine.
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — it provides the
@@ -62,6 +62,12 @@ binary, submits the pipeline spec and launches the controller+worker vanilla ope
 streams the controller log to the terminal. Ctrl-C only detaches — the pipeline keeps running on
 the cluster until `./stop.sh <scenario>` stops it and aborts the vanilla operation (by the alias the
 runner recorded in `@current_vanilla_operation` on the pipeline node).
+
+Two more things `run.sh` gives the template: `SCENARIO_DIR`, the absolute path of the scenario dir,
+which specs use to point at a file they deploy themselves (a companion binary, a bundle); and an
+optional variant — `./run.sh <scenario> <variant>` renders `pipeline_<variant>.yson.template`, for
+scenarios that ship several specs. A pipeline that lives deeper than the scenario dir is stopped by
+its path: `./stop.sh <scenario>/<variant>`.
 
 The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
 the runner config pins the reachable one instead of relying on proxy discovery:
