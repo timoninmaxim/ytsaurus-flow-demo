@@ -22,15 +22,17 @@ failure path is the upstream test this scenario does not port (see the last sect
 
 ## Run
 
+From the repo root:
+
 ```bash
-python3 yt_sync.py       # once: pipeline node, input_queue (4 tablets) + consumer, output_queue
-python3 prepare_data.py  # 1500 rows over 1024 keys, spread evenly across the 4 tablets
-./run.sh                 # deploys and streams the controller log until the pipeline completes
+python3 shuffle/yt_sync.py       # once: pipeline node, input_queue (4 tablets) + consumer, output_queue
+python3 shuffle/prepare_data.py  # 1500 rows over 1024 keys, spread evenly across the 4 tablets
+./run.sh shuffle                 # deploys and streams the controller log until the pipeline completes
 ```
 
-Like `secret_env` and unlike the endless scenarios, `run.sh` returns on its own: the source is
-finite, so the runner waits for `completed` and exits. Budget about two and a half minutes (the
-measured split is below).
+Unlike the endless scenarios, `run.sh` returns on its own here: the source is finite, so the
+runner waits for `completed` and exits. Budget about two and a half minutes (the measured split
+is below).
 
 The first seconds of the controller log look alarming and are not: one
 `E ... Failed to confirm leader_controller_address` and three
@@ -65,8 +67,8 @@ pipeline's own `flow_state` table, so this works after the pipeline has complete
 yt select-rows "c, sum(1) as partitions from [$YT_DEV_ROOT/shuffle/pipeline/flow_state] where not is_null(value) group by try_get_string(value, \"/computation_id\") as c" --format json
 ```
 
-Then `./stop.sh` aborts the vanilla operation (the pipeline is already `completed`, a final state,
-so there is nothing to stop).
+Then `./stop.sh shuffle` aborts the vanilla operation (the pipeline is already `completed`, a
+final state, so there is nothing to stop).
 
 ## Observed output
 
@@ -117,10 +119,10 @@ way to rewind the input queue's consumer or clear the output queue, so a repeat 
 recreating the scenario from scratch:
 
 ```bash
-./stop.sh
+./stop.sh shuffle
 yt remove -r "$YT_DEV_ROOT/shuffle"
-python3 yt_sync.py && python3 prepare_data.py
-./run.sh
+python3 shuffle/yt_sync.py && python3 shuffle/prepare_data.py
+./run.sh shuffle
 ```
 
 Recreating the queues invalidates the proxies' table mount cache, so the first `insert-rows` or
