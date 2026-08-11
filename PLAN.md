@@ -76,6 +76,7 @@ Ordered simplest-first; complexity S/M/L ≈ new code + verification effort.
 | 19 | `companion_python` | tests/companion/passthrough_transform + types/python | python companion (gRPC) inside the worker vanilla job; TTransformCompanionComputation | output mirrors input; native passthrough bypasses companion / type roundtrip | L |
 | 20 | `pipeline_alter` | tests/pipeline_alter | reader queue→queue; stop, rename computation in static spec, restart | data intact after rename; source-path change erases old state | L |
 | 21 | `transform_high_throughput` | yandex/benchmarks (moved) | TRandomSource → TProcessFunctionComputation (per-key state) → TAsyncQueueSink | throughput reported; `states` table non-empty | L |
+| 22 | `yql_map` | yandex/examples/cpp/yql_yson (simplified) | `yql_flow_server`; reader → TProcessFunctionComputation + TYqlYsonProcessFunction (row-wise `SELECT`: filter + re-key) → TSyncQueueSink | output rows uppercased/doubled, zero-value row dropped; **binary is Arcadia-only** — the YQL extension and its dep `yt/yql/purecalc` are not in the OSS export (see gaps register) | S |
 
 ## Excluded (with reason)
 
