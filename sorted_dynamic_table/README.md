@@ -129,11 +129,14 @@ Each variant is a separate pipeline in a separate Cypress subtree
 (`$YT_DEV_ROOT/sorted_dynamic_table/<variant>/`), because they differ in the *static* part of the
 spec — and `aggregate` also needs a different output-table schema. Run them one at a time:
 
-```bash
-python3 yt_sync.py   swift      # once per variant: pipeline node, input_queue + consumer, output_table
-python3 prepare_data.py swift   # 6994 queue rows over 1000 keys
+From the repo root:
 
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh swift
+```bash
+python3 sorted_dynamic_table/yt_sync.py swift      # once per variant: pipeline node, queue, table
+python3 sorted_dynamic_table/prepare_data.py swift # 6994 queue rows over 1000 keys
+
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh sorted_dynamic_table swift
 ```
 
 and the same three commands with `delete` or `aggregate` in place of `swift`. For `delete`,
@@ -156,8 +159,8 @@ coverage (Computations: [reader])` four times at 5 s intervals from the moment t
 local time while the controller's lines come from the vanilla job and carry UTC, so a three-hour
 jump in the middle of the stream is the timezone, not a stall.
 
-Then check the output, and finally `./stop.sh <variant>` to abort the vanilla operation (the
-pipeline is already `completed`, a final state, so there is nothing to stop).
+Then check the output, and finally `./stop.sh sorted_dynamic_table/<variant>` to abort the vanilla
+operation (the pipeline is already `completed`, a final state, so there is nothing to stop).
 
 ```bash
 V=swift   # or delete, or aggregate
@@ -203,7 +206,7 @@ I	FlowClient	Pipeline completed (Pipeline: <…>/sorted_dynamic_table/<variant>/
 ```
 
 ```
-$ python3 prepare_data.py swift
+$ python3 sorted_dynamic_table/prepare_data.py swift
 inserted 6994 rows into …/sorted_dynamic_table/swift/input_queue (1000 distinct keys)
 
 $ yt flow get-pipeline-state "…/sorted_dynamic_table/swift/pipeline"
@@ -217,7 +220,7 @@ rows where i is not the last message of its key: 0
 ```
 
 ```
-$ python3 prepare_data.py delete
+$ python3 sorted_dynamic_table/prepare_data.py delete
 inserted 1001 rows into …/sorted_dynamic_table/delete/output_table
 inserted 6994 rows into …/sorted_dynamic_table/delete/input_queue (1000 distinct keys)
 
@@ -280,12 +283,13 @@ measured. So:
 
 ```bash
 V=swift
-./stop.sh "$V"
+./stop.sh "sorted_dynamic_table/$V"
 yt unregister-queue-consumer "$YT_DEV_ROOT/sorted_dynamic_table/$V/input_queue" \
                              "$YT_DEV_ROOT/sorted_dynamic_table/$V/consumer"
 yt remove -r "$YT_DEV_ROOT/sorted_dynamic_table/$V"
-python3 yt_sync.py "$V" && python3 prepare_data.py "$V"
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh "$V"
+python3 sorted_dynamic_table/yt_sync.py "$V" && python3 sorted_dynamic_table/prepare_data.py "$V"
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh sorted_dynamic_table "$V"
 ```
 
 Recreating the tables invalidates the proxies' mount cache, so the first `insert-rows` or
