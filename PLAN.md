@@ -102,3 +102,51 @@ Ordered simplest-first; complexity S/M/L ≈ new code + verification effort.
 4. Run the verification queries; record actual output in README.
 5. Stop pipeline, abort operation (leave Cypress objects for inspection).
 6. Commit to the repo; review; next scenario.
+
+## Status (2026-08-11)
+
+Ten scenarios are ported and verified on the demo cluster. Each ran end to end —
+bootstrap, deploy as a vanilla operation, assert what the upstream test asserts,
+stop, abort — and each was reviewed by a second reader against the cluster before
+merging. Every scenario README records the `flow_server --version` its output came
+from, and states what it does *not* prove.
+
+| # | Scenario | Binary | PR |
+|---|----------|--------|----|
+| 1 | `message_filter` | stock | merged |
+| 2 | `secret_env` | own pipeline binary — the deliberate exception | #4 |
+| 3 | `shuffle` | stock | #5 |
+| 4 | `word_count_sync` | stock + C++ companion | #6 |
+| 5 | `computation_cycles_and_buffers` | stock + C++ companion | #7 |
+| 6 | `state_joiner` | stock + C++ companion | #8 |
+| 8 | `static_table` | stock, no user code | #9 |
+| 9 | `sorted_dynamic_table` | stock, no user code | #10 |
+| 10 | `swift_map_batching` | stock + C++ companion | #11 |
+| 19 | `companion_python` | stock + Python companion | #2 |
+| 22 | `yql_map` | `yql_flow_server` (Arcadia-only, see gaps) | #3 |
+
+**Binary policy as it settled.** Stock `flow_server` where the scenario allows it;
+a C++ companion where out-of-process user code is the point; the scenario's own
+binary only where a companion structurally cannot express the feature under test.
+`secret_env` is the deliberate proof that user C++ builds against the public
+libraries. Three of the last four ports needed no user code at all, including two
+whose upstream form ships a pipeline binary.
+
+### Parked
+
+- **#7 `external_joiner`** — blocked. Both upstream variants use
+  `external_state_joiners` with `join_on`/`key_schema_override`, which crashes the
+  `flow_server` worker process when the computation is companion-hosted. Port it
+  once that fix lands.
+- **`state_joiners` in-process (#6b)** — #6 ships on `external_state_joiners`
+  because a companion cannot use `state_joiners` at all. Under the settled policy
+  the in-process variant (own pipeline binary, upstream's spec verbatim) would
+  verify the namesake feature; not attempted.
+
+### Not ported
+
+#11 `test_distributed_throttler`, #12 `at_most_once_sink`, #13 `keep_order_mode`,
+#14 `servicelog`, #15 `table_injector`, #16 `working_pipeline_telemetry`,
+#17 `test_resource_control_channel`, #18 `key_visitor`, #20 `pipeline_alter`,
+#21 `transform_high_throughput`. No blocker known for any of them; the run was
+stopped here deliberately.
