@@ -66,24 +66,28 @@ named once in the `CompanionManager` resource's `entrypoint/executable`, deliver
 
 ## Run
 
+From the repo root:
+
 ```bash
-./build.sh                # builds + strips computation_cycles_companion.stripped (YTSAURUS=<checkout>)
-python3 yt_sync.py        # once: pipeline node, input_queue + consumer, state table
+computation_cycles_and_buffers/build.sh          # builds + strips the companion (YTSAURUS=<checkout>)
+python3 computation_cycles_and_buffers/yt_sync.py  # once: pipeline node, queue + consumer, state table
 
 python3 -c 'import json, sys
 for _ in range(1000):
     sys.stdout.write(json.dumps({"data": "payload", "$$tablet_index": 0}) + "\n")' \
   | yt insert-rows --format json "$YT_DEV_ROOT/computation_cycles_and_buffers/input_queue"
 
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh computation_cycles_and_buffers
 ```
 
 `run.sh` returns on its own when the pipeline completes — budget about two and a half minutes. Set
 `FLOW_BIN` to the **stripped** server: the runner uploads that exact file on every deploy, and the
 unstripped build it defaults to is gigabytes.
 
-Then check the state table, and finally `./stop.sh` to abort the vanilla operation (the pipeline is
-already `completed`, a final state, so there is nothing to stop):
+Then check the state table, and finally `./stop.sh computation_cycles_and_buffers` to abort the
+vanilla operation (the pipeline is already `completed`, a final state, so there is nothing to
+stop):
 
 ```bash
 yt flow get-pipeline-state "$YT_DEV_ROOT/computation_cycles_and_buffers/pipeline"
@@ -169,7 +173,7 @@ mechanism is not something this scenario verifies — what it verifies is the co
 by pausing while the count is still far from 1000:
 
 ```bash
-# in a second terminal, with ./run.sh streaming in the first
+# in a second terminal, with run.sh streaming in the first
 P="$YT_DEV_ROOT/computation_cycles_and_buffers/pipeline"
 yt select-rows "count from [$YT_DEV_ROOT/computation_cycles_and_buffers/state]" --format json
 yt flow pause-pipeline "$P"
@@ -205,10 +209,11 @@ count every three seconds and pausing as soon as it is non-zero is enough.
 queue's consumer cannot be rewound, so a repeat run means recreating the scenario:
 
 ```bash
-./stop.sh
+./stop.sh computation_cycles_and_buffers
 yt remove -r "$YT_DEV_ROOT/computation_cycles_and_buffers"
-python3 yt_sync.py   # may need a second run: the consumer registration races master lag
-# re-insert the 1000 rows, then ./run.sh
+python3 computation_cycles_and_buffers/yt_sync.py   # may need a second run: consumer registration
+                                                    # races master lag
+# re-insert the 1000 rows, then ./run.sh computation_cycles_and_buffers
 ```
 
 Both papercuts bite here: `yt remove` failed with `Cannot take "exclusive" lock …
