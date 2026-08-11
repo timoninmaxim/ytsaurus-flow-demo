@@ -49,12 +49,13 @@ The demo folds two integration tests into one always-on pipeline:
 
 ## Run
 
-Terminal 1 — build the bundle, bootstrap, then run the pipeline:
+Terminal 1 — build the bundle, bootstrap, then run the pipeline (from the repo root):
 
 ```bash
-./build.sh           # once per SDK/proto change: companion_bundle.tgz
-python3 yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
-./run.sh             # deploy + stream the controller log; Ctrl-C detaches, ./stop.sh stops
+companion_python/build.sh           # once per SDK/proto change: companion_bundle.tgz
+python3 companion_python/yt_sync.py # once: pipeline node, input_queue + consumer, output_queue
+./run.sh companion_python           # deploy + stream the log; Ctrl-C detaches,
+                                    # ./stop.sh companion_python stops
 ```
 
 Terminal 2 — feed the input queue and watch the output:
