@@ -106,11 +106,13 @@ treat the source rule as explaining the two ends of the progression and not the 
 
 ## Run
 
-```bash
-python3 yt_sync.py        # once: pipeline node + output_queue
-python3 prepare_data.py   # the two input tables, 1000 rows each
+From the repo root:
 
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh
+```bash
+python3 static_table/yt_sync.py        # once: pipeline node + output_queue
+python3 static_table/prepare_data.py   # the two input tables, 1000 rows each
+
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh static_table
 ```
 
 `prepare_data.py` must run **before** `run.sh` — the source is finite, so anything that is not in
@@ -131,8 +133,8 @@ appears every 5 s **in bursts while a table is being taken up** — seven lines 
 08:23:57–08:24:12 and 08:24:42–08:24:52, one per table — and is silent in between and after. (In an
 endless pipeline the same warning never stops; that is the shape the other scenarios record.)
 
-Then check the output, and finally `./stop.sh` to abort the vanilla operation (the pipeline is
-already `completed`, a final state, so there is nothing to stop):
+Then check the output, and finally `./stop.sh static_table` to abort the vanilla operation (the
+pipeline is already `completed`, a final state, so there is nothing to stop):
 
 ```bash
 yt flow get-pipeline-state "$YT_DEV_ROOT/static_table/pipeline"
@@ -198,7 +200,7 @@ $ yt select-rows "flow_queue_meta from [...output_queue] where is_null(data)" --
 `data` + event time match the upstream test's `expected_output` exactly: 1000 `payload_first_*` rows
 at `1500000000` and 1000 `payload_second_*` rows at `1600000000`, each exactly once. The number of
 heartbeat rows is not fixed — the controller keeps writing one every 10 s for as long as the vanilla
-operation lives, so it grows until `./stop.sh` (16 by the time this run was aborted).
+operation lives, so it grows until `./stop.sh static_table` (16 by the time this run was aborted).
 
 Upstream's two secondary assertions hold too. The pipeline's `states` table is empty, and — the part
 that is specific to a *swift* source — the source's partitions were cleaned up on completion, so no
@@ -227,10 +229,10 @@ means recreating the scenario. This is the cheapest scenario in the repo to recr
 queue consumer to unregister first (see `state_joiner`), because the input is not a queue:
 
 ```bash
-./stop.sh
+./stop.sh static_table
 yt remove -r "$YT_DEV_ROOT/static_table"
-python3 yt_sync.py && python3 prepare_data.py
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh
+python3 static_table/yt_sync.py && python3 static_table/prepare_data.py
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh static_table
 ```
 
 Recreating the output queue invalidates the proxies' table mount cache, so the first `select-rows`
