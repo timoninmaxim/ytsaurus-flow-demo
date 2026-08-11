@@ -1,0 +1,71 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/static_table/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "input_stream_ids" = [];
+                "output_stream_ids" = ["data"];
+                "source_streams" = {
+                    "table" = {
+                        "source_class_name" = "NYT::NFlow::NStaticTableConnector::TSource";
+                        "parameters" = {
+                            "tables_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/static_table/input";
+                            "finite" = %true;
+                        };
+                    };
+                };
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["data"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/static_table/output_queue";
+                            "write_flow_queue_meta" = %true;
+                        };
+                    };
+                };
+            };
+        };
+        "streams" = {
+            "data" = {
+                "schema" = [
+                    {"name" = "data"; "type" = "string"; required = %true;};
+                ];
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "batch_duration" = 100;
+                "source_streams" = {
+                    "table" = {
+                        "parameters" = {
+                            "desired_table_process_time" = 1000;
+                        };
+                    };
+                };
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "worker" = {"count" = 1;};
+        "node_config" = {"address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};};
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
