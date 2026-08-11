@@ -20,7 +20,7 @@ The stock `flow_server` does not register the YQL process functions; they live i
 computation extension, whose bundled binary is `yql_flow_server`. That extension is **not present
 in the opensource [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo** (and one of its
 dependencies, `yt/yql/purecalc`, is not exported either), so this scenario currently cannot be
-built by an external engineer — `run.sh` requires an explicit `FLOW_BIN` pointing at a
+built by an external engineer — it needs an explicit `FLOW_BIN` pointing at a
 `yql_flow_server` binary obtained elsewhere. Everything else (spec, bootstrap, verification) is
 plain opensource Flow.
 
@@ -31,11 +31,13 @@ value disables it.
 
 ## Run
 
-Terminal 1 — bootstrap once, then run the pipeline:
+Terminal 1 — bootstrap once, then run the pipeline (from the repo root):
 
 ```bash
-python3 yt_sync.py                       # once: pipeline node, input_queue + consumer, output_queue
-FLOW_BIN=/path/to/yql_flow_server ./run.sh   # deploy + stream the controller log; Ctrl-C detaches
+python3 yql_map/yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
+
+# The stock flow_server does not register the YQL process functions, so name the YQL build:
+FLOW_BIN=/path/to/yql_flow_server ./run.sh yql_map
 ```
 
 Terminal 2 — feed the input queue and watch the output:
@@ -56,4 +58,4 @@ Expected output — `bob` is dropped (`value = 0`), the rest are uppercased and 
 ```
 
 Nothing consumes the output queue, so repeated `select-rows` always shows everything written so
-far. `./stop.sh` stops the pipeline and aborts the vanilla operation.
+far. `./stop.sh yql_map` stops the pipeline and aborts the vanilla operation.
