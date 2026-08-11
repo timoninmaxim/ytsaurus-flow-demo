@@ -2,9 +2,8 @@
 // and one user computation. It is not the stock flow_server, which links more connectors.
 //
 // TSecretChecker asserts that the value declared in the spec's `vanilla/secret_env` is visible
-// inside the vanilla job as a plain environment variable. The source is finite, so the pipeline
-// reaches Completed only if every message passed the assertion; a missing or wrong secret fails
-// the job and the pipeline never completes.
+// inside the vanilla job as a plain environment variable. It throws on every message that fails the
+// assertion, so a missing or wrong secret turns into a job failure the controller keeps reporting.
 
 #include <yt/yt/flow/library/cpp/common/registry.h>
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Stops the pipeline, then aborts the vanilla operation the runner recorded on the pipeline node.
+# Stops a scenario's pipeline, then aborts the vanilla operation the runner recorded on the
+# pipeline node:
+#   ./stop.sh <scenario>
 set -euo pipefail
 
-PIPELINE="$YT_DEV_ROOT/message_filter/pipeline"
+SCENARIO="${1:?usage: ./stop.sh <scenario>}"
+PIPELINE="$YT_DEV_ROOT/${SCENARIO%/}/pipeline"
 
 yt flow stop-pipeline "$PIPELINE"
 until [ "$(yt flow get-pipeline-state "$PIPELINE")" = "stopped" ]; do sleep 2; done
