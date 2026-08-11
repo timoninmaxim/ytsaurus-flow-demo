@@ -87,12 +87,15 @@ should reach for a keyed transform with state and its own explicit boundary, not
 
 ## Run
 
-```bash
-./build.sh                # builds + strips swift_map_batching_companion.stripped (YTSAURUS=<checkout>)
-python3 yt_sync.py        # once: pipeline node, 5-tablet input_queue + consumer, output_queue
+From the repo root:
 
-python3 prepare_data.py 2000 0       # event_id 0..1999 — insert *before* deploying, see below
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh
+```bash
+swift_map_batching/build.sh          # builds + strips the companion (YTSAURUS=<checkout>)
+python3 swift_map_batching/yt_sync.py  # once: pipeline node, 5-tablet queue + consumer, output_queue
+
+python3 swift_map_batching/prepare_data.py 2000 0   # event_id 0..1999 — insert *before* deploying
+ALLOW_BATCHING=%true FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh swift_map_batching
 ```
 
 Set `FLOW_BIN` to the **stripped** server: the runner uploads that exact file on every deploy, and
@@ -102,9 +105,9 @@ Insert the events *before* `run.sh`, as the upstream test does. It is not a form
 only merge what one epoch holds, so a pipeline that is already draining a backlog merges in
 hundreds while a pipeline fed drop by drop merges nothing and the scenario proves nothing.
 
-The source is not finite, so `run.sh` streams until you Ctrl-C (which only detaches) and `./stop.sh`
-shuts the pipeline down. Feed more waves at any time — `prepare_data.py <count> <start>` — as long
-as the id ranges do not overlap.
+The source is not finite, so `run.sh` streams until you Ctrl-C (which only detaches) and
+`./stop.sh swift_map_batching` shuts the pipeline down. Feed more waves at any time —
+`prepare_data.py <count> <start>` — as long as the id ranges do not overlap.
 
 Verification is one query and one script, used unchanged after every wave below; the only argument
 is the number of events fed so far. Every result fenced below is this script's output, except the
@@ -188,10 +191,10 @@ P="$YT_DEV_ROOT/swift_map_batching/pipeline"
 
 # the second wave the timings above refer to; it also fills the gap between the first wave and
 # the ids the loop below starts at, so the verification range stays contiguous
-python3 prepare_data.py 20000 2000
+python3 swift_map_batching/prepare_data.py 20000 2000
 
 # terminal 2: twenty waves of 2000 events, 1.5 s apart
-for i in $(seq 0 19); do python3 prepare_data.py 2000 $((22000 + i*2000)); sleep 1.5; done
+for i in $(seq 0 19); do python3 swift_map_batching/prepare_data.py 2000 $((22000 + i*2000)); sleep 1.5; done
 
 # terminal 3: pause once the output is moving, then resume
 yt flow pause-pipeline "$P"
@@ -261,9 +264,9 @@ Deploy the same graph with the flag off, with unprocessed events waiting in the 
 lives in the *static* spec, so the pipeline has to be stopped for the runner to accept the change:
 
 ```bash
-./stop.sh
-python3 prepare_data.py 2000 62000       # the batcher needs something to merge
-ALLOW_BATCHING=%false ./run.sh
+./stop.sh swift_map_batching
+python3 swift_map_batching/prepare_data.py 2000 62000   # the batcher needs something to merge
+ALLOW_BATCHING=%false ./run.sh swift_map_batching
 ```
 
 Every batcher job then fails, forever, on the first key that carries more than one message:
@@ -286,13 +289,13 @@ with `stream_id = event_batched`. Three things about it are worth knowing before
 - **`stop.sh` will not stop it, and redeploying a fixed spec will not fix it.** `stop-pipeline`
   hangs in `draining` — the failing jobs never finish their epoch — and was still draining four
   minutes later; aborting the vanilla operation is the only exit. And after that, a plain
-  `./run.sh` with the flag back on **does not recover**: the runner's default update path stops the
-  pipeline before touching the spec, so it logs `Sent stop` and then `Still waiting (CurrentState:
+  `./run.sh swift_map_batching` with the flag back on **does not recover**: the runner's default
+  update path stops the pipeline before touching the spec, so it logs `Sent stop` and then `Still waiting (CurrentState:
   Draining, TargetState: Stopped)` indefinitely, and never uploads the corrected spec at all. The
   way out is the runner's non-graceful update, which pauses instead of stopping:
 
   ```bash
-  YT_FLOW_GRACEFUL_UPDATE=0 ./run.sh
+  ALLOW_BATCHING=%true YT_FLOW_GRACEFUL_UPDATE=0 ./run.sh swift_map_batching
   ```
 
   That recovered the pipeline here, and the 2000 events stranded by the misconfiguration came out
@@ -312,19 +315,20 @@ with `stream_id = event_batched`. Three things about it are worth knowing before
 
 ## Rerunning
 
-The pipeline never completes, so nothing has to be recreated between runs: `./stop.sh`, feed a
-fresh id range, `./run.sh`. The output queue keeps every previous run's rows, so pass the total
-event count to the verification snippet rather than the size of the last wave.
+The pipeline never completes, so nothing has to be recreated between runs:
+`./stop.sh swift_map_batching`, feed a fresh id range, `./run.sh swift_map_batching`. The output
+queue keeps every previous run's rows, so pass the total event count to the verification snippet
+rather than the size of the last wave.
 
 To start from an empty queue, drop the consumer registration **before** deleting the nodes it
 names, or the unregister may be refused afterwards:
 
 ```bash
-./stop.sh
+./stop.sh swift_map_batching
 yt unregister-queue-consumer "$YT_DEV_ROOT/swift_map_batching/input_queue" \
                              "$YT_DEV_ROOT/swift_map_batching/consumer"
 yt remove -r "$YT_DEV_ROOT/swift_map_batching"
-python3 yt_sync.py
+python3 swift_map_batching/yt_sync.py
 ```
 
 ## Differences from the integration test this is ported from
@@ -352,7 +356,7 @@ five input tablets, same ten grouping keys, same assertion.
 - **The pause/resume cut and the flag-off contrast are additions.** Upstream has neither; its
   single test writes 2000 events and waits for the set. Both are the parts of this port that test
   the flag's semantics instead of restating them.
-- **`ALLOW_BATCHING` is a template substitution**, defaulting to `%true`, so the contrast run is
+- **`ALLOW_BATCHING` is a template substitution** passed on the command line, so the contrast run is
   the same spec with one value changed. Changing it is a *static* spec change: the pipeline must
   be stopped for the runner to accept it (and see the recovery caveat above).
 - **The writer declares `processing_mode = "exactly_once"`** explicitly, where upstream leaves
