@@ -11,15 +11,7 @@ cd "$(dirname "$0")/${1:?usage: ./run.sh <scenario>}"
 LOCAL_BIN=$(ls ./*.stripped 2>/dev/null | head -n 1 || true)
 FLOW_BIN="${FLOW_BIN:-${LOCAL_BIN:-$HOME/ytsaurus/yt/yt/flow/bin/flow_server/flow_server}}"
 
-# The spec names the secrets it wants in `vanilla/secret_env`; the runner reads their values from
-# its own environment, but only after uploading the binary, so an unset one is caught here instead.
-python3 -c '
-import os, re, string, sys
-spec = string.Template(sys.stdin.read()).substitute(os.environ)
-declared = [name for block in re.findall(r"\"secret_env\"\s*=\s*\[([^]]*)\]", spec) for name in re.findall(r"\"([^\"]+)\"", block)]
-missing = [name for name in declared if name not in os.environ]
-if missing:
-    sys.exit("declared in the spec secret_env, but not set in the environment: " + ", ".join(missing))
-sys.stdout.write(spec)' < pipeline.yson.template > pipeline.yson
+python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline.yson.template > pipeline.yson
 
 exec "$FLOW_BIN" --config pipeline.yson

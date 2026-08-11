@@ -107,9 +107,8 @@ The persisted spec keeps only the *name* of the secret.
 
 ### The failure paths, checked as well
 
-With `YT_MY_SECRET` unset the runner refuses to launch. `run.sh` catches it first — it checks every
-name the spec lists in `secret_env` — but run the binary yourself and the runner reports it too,
-only after it has uploaded the binary:
+With `YT_MY_SECRET` unset the runner refuses to launch, though only after it has uploaded the
+binary:
 
 ```
 (NYT::TErrorException) Secret environment variable "YT_MY_SECRET" (declared in "secret_env") is not set
