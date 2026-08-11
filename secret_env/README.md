@@ -59,7 +59,9 @@ export YT_MY_SECRET=5           # the demo's fixed expected value; a real secret
                                 # your own store — the point is that it travels via your shell
 secret_env/build.sh             # builds + strips the binary (YTSAURUS=<checkout>)
 python3 secret_env/yt_sync.py   # once: the pipeline node (no queues or tables in this scenario)
-./run.sh secret_env             # deploy + stream the controller log; Ctrl-C detaches
+
+# This scenario deploys its own binary instead of the stock flow_server, so name it:
+FLOW_BIN=secret_env/secret_env_pipeline.stripped ./run.sh secret_env
 ```
 
 The pipeline stays in `working` and the log keeps reporting healthy jobs — that is the assertion
