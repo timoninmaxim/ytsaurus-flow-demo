@@ -89,18 +89,20 @@ with `No resource "NYT::NFlow::NCompanion::TCompanionResource" is registered`. A
 
 ## Run
 
+From the repo root:
+
 ```bash
-./build.sh               # builds + strips word_count_sync_companion.stripped (YTSAURUS=<checkout>)
-python3 yt_sync.py       # once: pipeline node, input_queue + consumer, word_counts, skipped_words
+word_count_sync/build.sh          # builds + strips the companion (YTSAURUS=<checkout>)
+python3 word_count_sync/yt_sync.py  # once: pipeline node, input_queue + consumer, the two tables
 
 printf '%s\n' '{"text": "hello to a world", "$$tablet_index": 0}' \
               '{"text": "flow is on it", "$$tablet_index": 0}' \
     | yt insert-rows --format json "$YT_DEV_ROOT/word_count_sync/input_queue"
 
-./run.sh                 # deploys and streams the controller log until the pipeline completes
+./run.sh word_count_sync          # deploys and streams the log until the pipeline completes
 ```
 
-Like `secret_env` and `shuffle`, `run.sh` returns on its own — budget about a minute and a half.
+Like `shuffle`, `run.sh` returns on its own — budget about a minute and a half.
 Then check the two tables:
 
 ```bash
@@ -109,8 +111,8 @@ yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync/word_counts]" --f
 yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync/skipped_words]" --format json
 ```
 
-Finally `./stop.sh` aborts the vanilla operation (the pipeline is already `completed`, a final
-state, so there is nothing to stop).
+Finally `./stop.sh word_count_sync` aborts the vanilla operation (the pipeline is already
+`completed`, a final state, so there is nothing to stop).
 
 ## Observed output
 
@@ -189,10 +191,10 @@ the only way out is to abort the operation directly.
 queue's consumer cannot be rewound, so a repeat run means recreating the scenario:
 
 ```bash
-./stop.sh
+./stop.sh word_count_sync
 yt remove -r "$YT_DEV_ROOT/word_count_sync"
-python3 yt_sync.py   # may need a second run: the consumer registration races master lag
-# re-insert the two rows, then ./run.sh
+python3 word_count_sync/yt_sync.py   # may need a second run: consumer registration races master lag
+# re-insert the two rows, then ./run.sh word_count_sync
 ```
 
 The `yt remove` can fail with `Cannot take "exclusive" lock … leader_controller_lock` for a few
