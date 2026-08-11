@@ -5,3 +5,5 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+pipeline_*.yson
+!pipeline_*.yson.template
