@@ -181,24 +181,26 @@ adds the multi-computation notes. This scenario adds three facts:
   key of the batch and ships it *with the table's schema attached*, so a fresh key arrives as an
   all-null row of the right width. No pre-seeding of the state table is needed.
 
+From the repo root:
+
 ```bash
-./build.sh                # builds + strips state_joiner_companion.stripped (YTSAURUS=<checkout>)
-python3 yt_sync.py        # once: pipeline node, input_queue + consumer, user_totals, output_table
+state_joiner/build.sh          # builds + strips the companion (YTSAURUS=<checkout>)
+python3 state_joiner/yt_sync.py  # once: pipeline node, queue + consumer, user_totals, output_table
 
 python3 -c 'import json, sys
 for i, amount in enumerate([10, 20, 30, 40]):
     sys.stdout.write(json.dumps({"UserId": "user-%d" % i, "Amount": amount, "$$tablet_index": 0}) + "\n")' \
   | yt insert-rows --format json "$YT_DEV_ROOT/state_joiner/input_queue"
 
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh state_joiner
 ```
 
 `run.sh` returns on its own when the pipeline completes — budget about two minutes. Set `FLOW_BIN`
 to the **stripped** server: the runner uploads that exact file on every deploy, and the unstripped
 build it defaults to is gigabytes.
 
-Then check the output, and finally `./stop.sh` to abort the vanilla operation (the pipeline is
-already `completed`, a final state, so there is nothing to stop):
+Then check the output, and finally `./stop.sh state_joiner` to abort the vanilla operation (the
+pipeline is already `completed`, a final state, so there is nothing to stop):
 
 ```bash
 yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner/pipeline"
@@ -266,11 +268,11 @@ queue's consumer cannot be rewound, so a repeat run means recreating the scenari
 consumer before deleting it**:
 
 ```bash
-./stop.sh
+./stop.sh state_joiner
 yt unregister-queue-consumer "$YT_DEV_ROOT/state_joiner/input_queue" "$YT_DEV_ROOT/state_joiner/consumer"
 yt remove -r "$YT_DEV_ROOT/state_joiner"
-python3 yt_sync.py
-# re-insert the four rows, then ./run.sh
+python3 state_joiner/yt_sync.py
+# re-insert the four rows, then ./run.sh state_joiner
 ```
 
 Deleting first and re-running `yt_sync.py` did not converge here: four runs in a row failed with
