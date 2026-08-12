@@ -1,0 +1,13 @@
+#!/bin/sh
+# Companion entrypoint, spawned by the worker (see `resources/CompanionManager/entrypoint`).
+#
+# The docker image supplies the interpreter; the SDK rides into the job sandbox as a job file
+# (companion_sdk.tgz, built by ./build_sdk.sh) and is unpacked on first start.
+set -e
+
+if [ ! -d sdk ]; then
+    tar xzf companion_sdk.tgz
+fi
+
+export PYTHONPATH="$PWD/sdk"
+exec /usr/local/bin/python3 "$PWD/main.py"

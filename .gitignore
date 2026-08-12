@@ -5,3 +5,5 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+sdk/
+companion_sdk.tgz
