@@ -1,0 +1,111 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/servicelog_merge_profiles/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "input_stream_ids" = [];
+                "output_stream_ids" = ["event"];
+                "source_streams" = {
+                    "main_source" = {
+                        "source_class_name" = "NYT::NFlow::TServiceLogSource";
+                        "parameters" = {
+                            "finite" = %true;
+                            "table_joiner" = {
+                                "fetchers" = [
+                                    {
+                                        "table_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/servicelog_merge_profiles/profiles";
+                                    };
+                                    {
+                                        "prefix" = "merged.";
+                                        "table_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/servicelog_merge_profiles/another_profiles";
+                                    };
+                                ];
+                            };
+                        };
+                    };
+                };
+            };
+            "key_reducer" = {
+                "computation_class_name" = "NYT::NFlow::TPassthroughComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "type" = "uint64"; required = %true;};
+                    {"name" = "key"; "type" = "int64";};
+                ];
+                "input_stream_ids" = ["event"];
+                "output_stream_ids" = ["sink_event"];
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["sink_event"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/servicelog_merge_profiles/output_queue";
+                        };
+                    };
+                };
+            };
+        };
+        "streams" = {
+            "event" = {
+                "schema" = [
+                    {"name" = "hash"; "type" = "uint64"; required = %true;};
+                    {"name" = "key"; "type" = "int64";};
+                    {"name" = "value"; "type" = "int64";};
+                    {"name" = "second_value"; "type" = "int64";};
+                    {"name" = "merged.ispresent"; "type" = "boolean";};
+                    {"name" = "merged.value"; "type" = "int64";};
+                    {"name" = "merged.second_value"; "type" = "int64";};
+                ];
+            };
+            "sink_event" = {
+                "schema" = [
+                    {"name" = "hash"; "type" = "uint64"; required = %true;};
+                    {"name" = "key"; "type" = "int64";};
+                    {"name" = "value"; "type" = "int64";};
+                    {"name" = "second_value"; "type" = "int64";};
+                    {"name" = "merged.ispresent"; "type" = "boolean";};
+                    {"name" = "merged.value"; "type" = "int64";};
+                    {"name" = "merged.second_value"; "type" = "int64";};
+                ];
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "max_rows_per_batch" = 150;
+                "source_streams" = {
+                    "main_source" = {
+                        "parameters" = {
+                            "desired_partition_count" = 5;
+                            "desired_cycle_time" = "10s";
+                            "throttler_period" = "10s";
+                        };
+                    };
+                };
+            };
+            "key_reducer" = {
+                "parameters" = {"desired_partition_count" = 7;};
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "worker" = {"count" = 2;};
+        "node_config" = {"address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};};
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
