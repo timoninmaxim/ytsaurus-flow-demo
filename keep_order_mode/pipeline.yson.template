@@ -1,0 +1,139 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/keep_order_mode/pipeline";
+    "spec" = {
+        "computations" = {
+            "Reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "distribution_ordering" = "strict";
+                "input_stream_ids" = [];
+                "output_stream_ids" = ["event_0"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/keep_order_mode/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/keep_order_mode/consumer";
+                            "finite" = %true;
+                        };
+                    };
+                };
+                "watermark_strategy" = {
+                    "event_timestamp_assigner" = {
+                        "column" = "event_time";
+                    };
+                };
+            };
+            "Shuffle_1" = {
+                "computation_class_name" = "NYT::NFlow::TPassthroughComputation";
+                "distribution_ordering" = "strict";
+                "input_ordering" = {"time_type" = "event_time";};
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(reduce_id) * 1009"; "type" = "uint64"; required = %true;};
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                ];
+                "input_stream_ids" = ["event_0"];
+                "output_stream_ids" = ["event_1"];
+            };
+            "Shuffle_2" = {
+                "computation_class_name" = "NYT::NFlow::TPassthroughComputation";
+                "distribution_ordering" = "strict";
+                "input_ordering" = {"time_type" = "event_time";};
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(reduce_id) * 13"; "type" = "uint64"; required = %true;};
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                ];
+                "input_stream_ids" = ["event_1"];
+                "output_stream_ids" = ["event_2"];
+            };
+            "QueueReducer" = {
+                "computation_class_name" = "NYT::NFlow::TPassthroughComputation";
+                "distribution_ordering" = "strict";
+                "input_ordering" = {"time_type" = "event_time";};
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(reduce_id)"; "type" = "uint64"; required = %true;};
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                ];
+                "input_stream_ids" = ["event_2"];
+                "output_stream_ids" = ["sink_event"];
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["sink_event"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/keep_order_mode/output_queue";
+                        };
+                    };
+                };
+            };
+        };
+        "streams" = {
+            "event_0" = {
+                "schema" = [
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                    {"name" = "event_id"; "type" = "int64";};
+                    {"name" = "event_time"; "type" = "uint64";};
+                ];
+            };
+            "event_1" = {
+                "schema" = [
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                    {"name" = "event_id"; "type" = "int64";};
+                    {"name" = "event_time"; "type" = "uint64";};
+                ];
+            };
+            "event_2" = {
+                "schema" = [
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                    {"name" = "event_id"; "type" = "int64";};
+                    {"name" = "event_time"; "type" = "uint64";};
+                ];
+            };
+            "sink_event" = {
+                "schema" = [
+                    {"name" = "reduce_id"; "type" = "uint64";};
+                    {"name" = "event_id"; "type" = "int64";};
+                ];
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "Reader" = {
+                "batch_duration" = 100;
+                "max_rows_per_batch" = 10;
+            };
+            "Shuffle_1" = {
+                "parameters" = {"desired_partition_count" = 8;};
+            };
+            "Shuffle_2" = {
+                "parameters" = {"desired_partition_count" = 8;};
+            };
+            "QueueReducer" = {
+                "parameters" = {"desired_partition_count" = 8;};
+                "skip_if_expression" = "event_id = -1";
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+        "message_distributor" = {
+            "send_queue_batch_duration" = "1s";
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "worker" = {"count" = 2;};
+        "node_config" = {"address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};};
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
