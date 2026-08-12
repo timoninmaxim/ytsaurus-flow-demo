@@ -1,0 +1,106 @@
+# key_visitor
+
+A pipeline whose subject is the engine's **key-visitor stream**: a per-computation background
+sweep the worker runs over every key the computation holds state for, injecting a *visit* per key
+into the user code on top of the ordinary message flow — Flow's answer to "iterate my keyed state
+periodically" (what a Flink user would build with a processing-time timer re-registered per key).
+
+```
+key_reader (stock TSwiftPassthroughOrderedSourceComputation over TQueueSource, finite)
+   → keys
+tester (TProcessFunctionComputation hosting NYT::NFlow::NDemo::TVisitTesterFunction,
+        key_visitor_streams: visit_iter, period 20 s)
+   → visits → TSyncQueueSink → output_queue
+```
+
+`tester` groups by `farm_hash(key), key`. On a **message** it stores the payload in per-key
+internal state; on a **visit** it emits the *stored* payload together with a per-key visit
+counter (`visit_index`). The engine drives everything else: the worker tracks the computation's
+keys in the pipeline's `key_visitor_states` table, sweeps the partition's hash range once per
+`period`, and — because the source is finite and the visitor's `finite` flag defaults to `%true`
+— arms one **final pass** after the input is drained, then lets the pipeline complete.
+
+The choreography, ported from the upstream test (`tests/key_visitor/cpp`, `test_key_visitor`):
+seed every key with a v1 payload and then again with a v2 payload *before* the pipeline starts;
+wait for `completed`; assert that the **latest** visit of every key (highest `visit_index`)
+carries the v2 payload. That proves the final pass swept the post-completion state — not a stale
+snapshot taken while v1 was still current.
+
+## This scenario ships its own binary — but a companion would have worked
+
+The visit tester is user C++, so the first candidate was the stock `flow_server` plus a C++
+companion, as in `word_count_sync`. Key visitors are **not** contract-blocked for companions
+(unlike `state_joiners`): `companion_service.proto` carries visits in the process-batch request
+(`repeated TVisit visits`), `TTransformCompanionComputation` forwards them together with the
+states for the visited keys, and the companion-side SDK routes them into the registered
+function's `ProcessVisit` (`companion/server/job.cpp`).
+
+The own binary still won, because it is strictly smaller here. The scenario's subject — key
+tracking, the periodic sweep, the finite final pass, completion — lives entirely in the worker,
+identically under either hosting; the companion route would add a second binary, the
+`CompanionManager` resource and a third worker port for zero extra coverage of the subject. So:
+`build.sh` stages `pipeline/` into your ytsaurus checkout, builds with `ya make` and strips the
+result back here, exactly like `working_pipeline_telemetry` (see `secret_env/README.md` for why
+staging is needed).
+
+## Deviation from the upstream test, deliberate
+
+The upstream `lib` + `pipeline/main.cpp` split collapses into a single `pipeline/main.cpp`, and
+the class names move from `NKeyVisitorTest` to `NYT::NFlow::NDemo`. Only the internal-state
+variant is ported: the sibling upstream variants exercise the same sweep against a
+`TSimpleExternalStateManager` table (`pipeline_external`) and a computation whose *only* work
+source is the visitor (`pipeline_keyvisitor_only`); the visit choreography and the assert are
+those of `test_key_visitor`. Spec shape, the 20 s `visit_iter` period, the finite queue source
+and the seeded v1-then-v2 payloads mirror the test exactly.
+
+## Run
+
+From the repo root:
+
+```bash
+key_visitor/build.sh              # builds + strips the binary (YTSAURUS=<checkout>)
+python3 key_visitor/yt_sync.py    # once: pipeline node, input/output queues, consumer
+python3 key_visitor/prepare_data.py  # 20 keys as v1, then the same 20 keys as v2
+
+FLOW_BIN=key_visitor/key_visitor_pipeline.stripped \
+    ./run.sh key_visitor          # deploys and streams the log until the pipeline completes
+```
+
+The source is finite, so `run.sh` returns on its own — budget about three minutes (one 20 s
+visitor period has to elapse, plus the final pass). Then:
+
+```bash
+python3 key_visitor/verify.py     # waits for `completed`, then mirrors the upstream asserts
+./stop.sh key_visitor             # aborts the vanilla operation (the pipeline is already completed)
+```
+
+The raw output is also one query away:
+
+```bash
+yt select-rows "key, payload, visit_index from [$YT_DEV_ROOT/key_visitor/output_queue]" --format json
+```
+
+## Observed output
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`
+(printed by `run.sh` on the way in). The pipeline was deployed with both payload batches already
+in the queue and reached `completed` in about three minutes; `verify.py` passed on its first run:
+
+```
+$ python3 key_visitor/verify.py
+ok: pipeline reached `completed`
+ok: all 20 seeded keys were visited
+ok: the latest visit of every key carries the v2 payload
+output rows: 38; per-key max visit_index range: 1..2
+OK: the final key-visitor pass swept the post-completion state of every key
+```
+
+The 1..2 spread is the sweep made visible: keys whose hash range the periodic pass reached while
+the pipeline was still working were visited twice (once with whatever payload was current, once
+by the final pass), the rest exactly once — by the final pass, every one of them with v2. The
+tail of the runner log:
+
+```
+2026-08-12 23:57:32,434273 I PublicFlowController Job completed (..., ComputationId: tester)
+2026-08-13 02:58:01,146507 I FlowClient Pipeline completed (Pipeline: .../key_visitor/pipeline)
+```
