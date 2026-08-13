@@ -148,3 +148,134 @@ On this run the controller briefly stopped answering right as `stop.sh` sampled 
 took its no-controller branch and went straight to aborting the vanilla operation — the pipeline's
 *persisted* state therefore remains `working`, and a later `./run.sh` of the same scenario resumes
 it. When the controller does answer, `stop.sh` performs the graceful `stop-pipeline` first.
+
+## Go companion variant
+
+`companion_go/` re-runs the benchmark with the per-key-state reducer written in **Go**
+(`go.ytsaurus.tech/yt/go/flow`), hosted by the stock `flow_server` — no custom binary. The pipeline
+shape is unchanged: a two-partition native reader feeding a two-partition transform
+(`farm_hash(key)` grouping, per-key internal state `"state"` persisted into the built-in `states`
+table) whose output the async queue sink writes to a two-tablet queue, on one worker. `main.go`
+registers the single `Reducer` computation (`flow.BatchFunction` + `flow.OpenYSONState`, grouping
+the mixed-key batch in first-appearance order, exactly like the Python variant); the reader stays
+native, so the Go code sits exactly where the C++ user code sat — on the transform path. **The
+pipeline binary is its own runner**, as in the other `companion_go` variants: the same `main`
+calling `pipeline.Run()` is the companion served inside the worker job and the launcher run on the
+dev host, so the spec has no `streams` block (the `event`/`out` schemas are injected), no
+`entrypoint` and no `local_files`.
+
+The two adaptations proven by the Python variant carry over unweakened: the input is a queue fed
+from the dev host (`companion_go/feed.py`, same distributions as `TRandomSource` under
+`message_key_range = 1000000`), and `companion_go/measure.py` is the reference method plus the
+fed-input honesty checks (the input backlog must stay non-empty through the window, the state
+count filters `computation_id = 'Reducer'`, selects pass an explicit `input_row_limit`).
+
+### Run
+
+From the repo root, with your env file sourced (the sibling `~/ytsaurus` checkout provides the SDK
+through the `replace` in `go.mod`; `./run.sh` does not fit the Go route — the Go runner is the
+pipeline binary itself and needs `--flow-bin` — so the template is rendered with a one-liner and
+the binary launched directly):
+
+```bash
+transform_high_throughput/companion_go/build.sh    # go build; GO="ya tool go" if no system go
+(cd transform_high_throughput/companion_go && ${GO:-go} test ./...)  # offline reducer-logic proof
+
+python3 transform_high_throughput/companion_go/yt_sync.py  # once: pipeline node, queues, consumer, producer
+```
+
+On a cluster with fewer than six online data nodes, clear the erasure codec the pipeline preset
+puts on the system tables (see `state_joiner/README.md` for the full story of this sharp edge)
+before the first deploy:
+
+```bash
+for t in $(yt find "$YT_DEV_ROOT/transform_high_throughput_go" --type table); do
+    yt set "$t/@erasure_codec" none
+    yt set "$t/@hunk_erasure_codec" none
+    yt remount-table "$t"
+done
+```
+
+Then deploy and, from a second terminal, feed and measure:
+
+```bash
+cd transform_high_throughput
+SCENARIO_DIR="$PWD" python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline_go.yson.template > pipeline_go.yson
+./companion_go/transform_high_throughput_go --config pipeline_go.yson \
+    --flow-bin ~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped
+                                    # deploy + stream the controller log; Ctrl-C detaches
+
+python3 transform_high_throughput/companion_go/feed.py --duration 600 --rate 8000   # keep it running…
+python3 transform_high_throughput/companion_go/measure.py                           # …while this measures
+
+./stop.sh transform_high_throughput_go   # stop the pipeline + abort the vanilla operation
+```
+
+### Observed output
+
+Recorded from the live run on the demo cluster, `flow_server` built from ytsaurus commit
+`1bdcb82f3ab` (heads/main), one worker, feed at 8,000 rows/s (feeder log: `fed 200000 rows, 8290
+rows/s achieved`, zero "behind" warnings). The pipeline reached `working` in under a minute and
+held it before, through, and after the window:
+
+```
+$ python3 transform_high_throughput/companion_go/measure.py 60
+pipeline state: working
+t0 sample: 2319532 rows, 286710278 cumulative bytes, input backlog 79999 rows; measuring for 60s ...
+throughput: 8004 rows/s, 0.942 MB/s (+482543 rows in 60.3s, queue at 2802075 rows)
+input backlog: 79999 rows at t0 -> 82130 rows at t1
+ok: states table has 7741 Reducer keys
+OK: sustained `working`, 8004 rows/s with a non-empty input backlog, states table has 7741 keys
+```
+
+The three-way comparison, same pipeline shape, same partition counts, same one worker (identical
+~123 bytes/row all three ways):
+
+| Variant | User code runs in | rows/s | MB/s | vs C++ |
+|---|---|---|---|---|
+| C++ (`pipeline/main.cpp`) | worker process, in-binary | 9,505 | 1.119 | 100% |
+| **Go (`companion_go/main.go`)** | one Go process, gRPC companion | **8,004** | **0.942** | **84%** |
+| Python (`companion_py/main.py`) | one CPython process, gRPC companion | 5,726 | 0.672 | 60% |
+
+Two honesty notes on the Go figure:
+
+- **The backlog held but did not grow much** (79,999 → 82,130 rows across the window): with a
+  standing ~80K-row backlog always available to read, the pipeline processed at almost exactly the
+  feed rate rather than draining the backlog — 8,004 rows/s is what the whole system sustained,
+  with the input never the limiting factor inside the window.
+- **Feeding faster collapses the cluster, not the pipeline.** Every attempt above 8K rows/s —
+  12K single-feeder, 2×15K dual-feeder — was killed within seconds to minutes by
+  `Node is out of tablet memory, all writes disabled` (code 1703) from the demo cluster's one
+  active tablet node (`tnd-0` carries every Flow tablet and has a 5 GiB total memory limit;
+  `tnd-1` idles at zero). The transform path writes each message several times (input store,
+  output store, output queue, state), so the fed benchmark roughly doubles the tablet write load
+  the self-generating C++ variant produced — the C++ 9,505 figure had no input queue to feed. On
+  this cluster the Go companion's own ceiling is therefore *at least* 8K rows/s; a bigger tablet
+  bundle would be needed to find where Go actually tops out. Recovery, when the node trips:
+  wait out the write freeze, `yt trim-rows` the consumed input, and force a flush with
+  `yt freeze-table` + `yt unfreeze-table` on the fat queues.
+
+Parallelism: the whole transform ran as a **single Go process** — the Go runner ships the pipeline
+binary itself as the one companion executable, and the SDK parses `companion_process_count` but
+deliberately ignores it (no multi-process fan-out, unlike the Python SDK). Concurrency is
+goroutines: the gRPC server serves both Reducer partitions' `ProcessBatch` calls concurrently, and
+`GOMAXPROCS` is unrestricted in this job environment (no cgroup CPU quota, the same observation the
+Python run recorded). So the 8,004 rows/s figure is one compiled process with in-process
+concurrency against one interpreter for Python — which is the whole difference: 40% over Python
+from the language runtime alone, 16% short of C++ mostly to the gRPC hop and YSON re-encoding on
+the companion boundary.
+
+The per-key state, filtered as the C++ check is (the same key neighbourhood around one million;
+the Go SDK stores internal state as binary-YSON bytes, so like the Python variant it lands in the
+`states` row as an opaque payload rather than the C++ variant's structured map — the readable
+parts of the payload are the `count` and `last_data` map keys):
+
+```
+$ yt select-rows "computation_id, key, state from [...pipeline/states] where computation_id = 'Reducer' limit 2" --format json
+{"computation_id":"Reducer","key":[798995128167919,"998816"],"state":{"payload":"{count=...;last_data=...psbco...;}"}}
+{"computation_id":"Reducer","key":[3411560120071481,"999036"],"state":{"payload":"{count=...;last_data=...mmfqi...;}"}}
+
+$ yt select-rows "sum(1) as cnt from [...pipeline/states] where computation_id = 'Reducer' group by 1" --format json
+{"cnt":7800}
+```
