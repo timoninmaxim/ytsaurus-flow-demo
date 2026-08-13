@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Companion entrypoint: the worker spawns this file (see the CompanionManager resource's
+# "entrypoint" in pipeline_py.yson.template) with YT_FLOW_COMPANION_CONFIG in the environment.
+# Unpacks the bundle once per job sandbox, then runs the companion gRPC server.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if [ ! -d .companion_bundle ]; then
+    rm -rf .companion_bundle.tmp
+    mkdir .companion_bundle.tmp
+    tar xzf companion_bundle.tgz -C .companion_bundle.tmp
+    mv .companion_bundle.tmp .companion_bundle
+fi
+
+# The bundle carries its own CPython: the job image's python3.8 is too old for the SDK.
+exec .companion_bundle/python/bin/python3 .companion_bundle/main.py

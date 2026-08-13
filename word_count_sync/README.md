@@ -241,3 +241,83 @@ the ytsaurus repo. Same input, same expected counts, same skipped words.
   too and is worth a word: it only affects bulk readers over a dynamic table, while the
   `select-rows` this scenario verifies with always sees the dynamic stores — so the checks below
   are exact without it.
+
+## Python companion variant
+
+`companion_py/` re-runs the scenario with the reader and the counter written in **Python**,
+hosted by the same stock `flow_server` through the same two companion host classes — including
+the swift source: `TSwiftOrderedSourceCompanionComputation` drives the Python `TextRead` exactly
+as it drives the C++ `TTextReadFunction`, so this variant shows a Python function on the
+source path, not just on the transform path. The topology — including the skipped-words stream
+plus sync sink that replaced upstream's `ISyncProcessFunction` side-write — and the choreography
+are identical; `companion_py/main.py` registers both functions, `pipeline_py.yson.template` is
+the same graph under its own root `$YT_DEV_ROOT/word_count_sync_py`, and the companion delivery
+is the launcher + bundle pair from `key_visitor/companion_py` (`entrypoint = ./py_companion`,
+two `local_files`, worker `port_count = 3`).
+
+Deliberate differences against the C++ variant — the asserts are unchanged:
+
+- **The stop words travel in the spec's `parameters`, not in a companion-hosted resource.** The
+  C++ companion SDK hosts `TStopWordsResource` behind `NCompanion::TCompanionResource`; the
+  Python SDK registers computations only, there is no `AddResource` counterpart. So the
+  `StopWords` resource is gone from the spec and `computations/counter/parameters` carries both
+  `min_word_length` and `stop_words`, which the function reads through `ctx.parameters`. The
+  observable behaviour is the same (`flow` is not counted, `to` is not among the skipped words);
+  what is lost is only the resource machinery itself — parameter parsing in user code, a
+  controller-driven lifecycle, dynamic updates.
+- **External state is written back explicitly.** The C++ state accessor persists the mutated
+  payload; in the Python SDK only `state.set(...)` marks the key's external state "/state" for
+  write-back — the counter reads `state.get("count")`, builds the incremented payload and
+  `set`s it. The write still commits in the same epoch transaction as the sync sink's rows.
+- **`processing_function` is omitted.** The Python SDK dispatches by `computation_id`
+  (`pipeline.add("reader", …, source=True)` / `pipeline.add("counter", …)`), so the spec does
+  not name the functions — and the two startup `E SimpleRunner Found specs parseability error`
+  lines of the C++ run do not appear at all.
+
+`build.sh` follows `swift_map_batching/companion_py/build.sh`: it reuses the already-built
+`ytsaurus-flow-companion` wheel from `companion_python/build/wheels/` when present and otherwise
+builds it from `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package` — the wheel's source
+package in the ytsaurus repo (it is not published on PyPI yet).
+
+Run, from the repo root:
+
+```bash
+word_count_sync/companion_py/build.sh        # companion_bundle.tgz: CPython + SDK + main.py
+python3 word_count_sync/companion_py/yt_sync.py   # once: objects under word_count_sync_py/
+
+printf '%s\n' '{"text": "hello to a world", "$$tablet_index": 0}' \
+              '{"text": "flow is on it", "$$tablet_index": 0}' \
+    | yt insert-rows --format json "$YT_DEV_ROOT/word_count_sync_py/input_queue"
+
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh word_count_sync py              # stock binary; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_py/pipeline"
+yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_py/word_counts]" --format json
+yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_py/skipped_words]" --format json
+./stop.sh word_count_sync_py                 # aborts the vanilla operation
+```
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`,
+first deploy:
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_py/pipeline"
+completed
+
+$ yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_py/word_counts]" --format json
+{"word":"hello","count":1}
+{"word":"world","count":1}
+
+$ yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_py/skipped_words]" --format json
+{"word":"a","length":1}
+{"word":"is","length":2}
+{"word":"it","length":2}
+{"word":"on","length":2}
+```
+
+Identical to the C++ variant's output, and the two tables again prove the stop words were
+applied — this time from `ctx.parameters`. Timings: vanilla operation 26:53 → pipeline
+`working` 27:05 → all six jobs done 27:51 → `completed` 28:04, ~70 s end to end; the companion
+`Connection refused` dial flood lasted ~4 s (27:23–27:27) while the 112 MB Python bundle
+unpacked, same as the other Python-companion scenarios.
