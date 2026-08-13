@@ -1,0 +1,128 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/state_joiner_go/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "output_stream_ids" = ["events"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/state_joiner_go/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/state_joiner_go/consumer";
+                            "finite" = %true;
+                        };
+                    };
+                };
+            };
+            "accumulator" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "Hash"; "expression" = "farm_hash(UserId)"; "type" = "uint64"; required = %true;};
+                    {"name" = "UserId"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["events"];
+                "output_stream_ids" = ["users"];
+                "external_state_managers" = {
+                    "/user_total" = {
+                        "external_state_manager_class_name" = "NYT::NFlow::TSimpleExternalStateManager";
+                        "parameters" = {
+                            "path" = "${YT_DEV_ROOT}/state_joiner_go/user_totals";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+            "joiner" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "Hash"; "expression" = "farm_hash(UserId)"; "type" = "uint64"; required = %true;};
+                    {"name" = "UserId"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["users"];
+                "output_stream_ids" = ["results"];
+                "external_state_joiners" = {
+                    "/user_total" = {
+                        "external_state_joiner_class_name" = "NYT::NFlow::TSimpleExternalStateJoiner";
+                        "join_on" = {};
+                        "parameters" = {
+                            "path" = "${YT_DEV_ROOT}/state_joiner_go/user_totals";
+                        };
+                    };
+                };
+                "sinks" = {
+                    "out" = {
+                        "sink_class_name" = "NYT::NFlow::NSortedDynamicTable::TSyncSink";
+                        "input_stream_ids" = ["results"];
+                        "parameters" = {
+                            "table_path" = "${YT_DEV_ROOT}/state_joiner_go/output_table";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
+                "parameters" = {};
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 1;
+                };
+            };
+            "accumulator" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 2;
+                };
+            };
+            "joiner" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 2;
+                };
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "controller" = {"count" = 1; "port_count" = 2;};
+        "worker" = {"count" = 1;};
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}

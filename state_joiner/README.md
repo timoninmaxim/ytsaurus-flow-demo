@@ -317,3 +317,133 @@ graph, same stream names, same four users, same assertion.
   unexamined: `batch_duration = 100` (ms) on all three computations instead of the 1 s default, so
   the pipeline finishes quickly, and `job_tracker/job_threads = 4` instead of the default 30,
   because five jobs on one worker need no more. Raise both for anything with real throughput.
+
+## Go companion variant
+
+`companion_go/` re-runs the scenario with the accumulator and the joiner written in **Go**
+(`go.ytsaurus.tech/yt/go/flow`), hosted by the stock `flow_server` through the same
+`TTransformCompanionComputation` host class; the reader stays the stock C++ source computation,
+exactly as in the C++ and Python variants. The topology, the external-state restructuring and the
+assertion are unchanged, and everything runs under its own root `$YT_DEV_ROOT/state_joiner_go`.
+
+What this variant demonstrates on top of the C++ one: **`external_state_joiners` is fully usable
+from Go** — this is the first live run of `flow.OpenJoinedExternalState`. The worker-side host
+ships the joined states with each batch, and the SDK surfaces them as a
+`JoinedExternalStateAccessor` with the same `Payload` reads as the owned-state accessor and **no
+write methods at all** — "joiners never write back" is enforced by the Go type system, where
+Python raises `ReadOnlyExternalStateError` at runtime. The joiner is a `flow.BatchFunction` — the
+Go counterpart of the `IBatchProcessFunction` granularity the upstream test uses — and receives
+the request's whole message batch, keys mixed, which is fine here because the join key is the
+message's own key (`join_on = {}`) and each message is handled on its own. The exported example
+`yt/yt/flow/examples/go/external_state_join` in the ytsaurus repo covers exactly this read path
+and was the reference for the `ErrStateNotRead` handling.
+
+Everything in "What this scenario found" above applies unchanged, because the limits live in the
+worker-side host and the wire contract, not in the user's language: `state_joiners` is unavailable
+to Go exactly as to C++ and Python companions, and `key_schema_override` under an external state
+joiner would hit the same worker-killing `GetOrCrash` before any Go code runs. This spec therefore
+joins on the same key, like the other two.
+
+**The pipeline binary is its own runner**, as in the other `companion_go` variants: the same
+`main` calling `pipeline.Run()` is the companion served inside the worker job and the launcher run
+on the dev host. `pipeline_go.yson.template` is accordingly smaller than the C++ and Python specs:
+no `streams` block (the schemas registered with `pipeline.AddStreams` are injected), no
+`entrypoint`, no `local_files`, no worker `port_count`, no `processing_function` names (the Go SDK
+dispatches by `computation_id`). Verified against the live run once more — the runner did all of
+it unaided: the stored spec carried the three injected stream schemas,
+`entrypoint = {executable = "./go_companion"}` + `run_process = %true` on the CompanionManager
+resource, and the `external_state_joiners` block intact (with the `auto_preload = %true` default
+filled in). One consequence of the injection: the registered stream schemas arrive with every
+column optional, so where the C++ spec marks `UserId`/`Amount`/`Total` required the injected
+schemas do not, and this variant's `group_by_schema` drops `required` from `UserId` accordingly.
+
+**The three shapes of a missed join, and the `-1` sentinel.** As in C++, the joiner answers a miss
+with `Total = -1` rather than an error (an error in a companion is retried forever). From Go the
+miss has three shapes, and the code must handle all of them:
+
+- **an all-null state row** — the live shape of "no row in `user_totals` for the key": the worker
+  ships a present row of the table's width with every value column null, so `state.Get()` returns
+  `ok` and the null check must be per column (`row.Has("Total")`). This mirrors the accumulator's
+  "no total yet" read, the same live shape that `word_count_sync`'s Go variant first looped on;
+  `flowtest.Harness` models an unseeded key as *no row at all* instead, so the offline tests seed
+  a key-columns-only row to pin the live behaviour.
+- **`ErrStateNotRead`** from `flow.OpenJoinedExternalState` — the joined state was not shipped
+  with the request at all. Live this does not occur (the host ships a state for every batch key);
+  offline it is exactly how the harness models "no row seeded for any key of the batch".
+- **a key absent from the shipped states** — `state.Get()` returns `!ok`; reachable offline when
+  some other key of the batch was seeded.
+
+In the run below no `-1` appears, which is itself part of the assertion.
+
+The logic is proven offline first: `companion_go/main_test.go` drives both computations through
+`flowtest.Harness` (accumulation from empty, over the live null-`Total` row shape and over prior
+state; the join's read path and its seeded row left untouched; every miss shape above; and an
+end-to-end pipe of the four input events asserting exactly the totals the live run is verified
+by) — no cluster needed.
+
+Run, from the repo root:
+
+```bash
+state_joiner/companion_go/build.sh          # go build; GO="ya tool go" if there is no system go
+(cd state_joiner/companion_go && ${GO:-go} test ./...)   # offline accumulate-and-join tests
+
+python3 state_joiner/companion_go/yt_sync.py    # once: objects under state_joiner_go/
+
+python3 -c 'import json, sys
+for i, amount in enumerate([10, 20, 30, 40]):
+    sys.stdout.write(json.dumps({"UserId": "user-%d" % i, "Amount": amount, "$$tablet_index": 0}) + "\n")' \
+  | yt insert-rows --format json "$YT_DEV_ROOT/state_joiner_go/input_queue"
+
+cd state_joiner
+SCENARIO_DIR="$PWD" python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline_go.yson.template > pipeline_go.yson
+./companion_go/state_joiner_go --config pipeline_go.yson \
+    --flow-bin ~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped
+                                        # execs flow_server; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_go/pipeline"
+yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_go/output_table]" --format json
+yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_go/user_totals]" --format json
+cd .. && ./stop.sh state_joiner_go      # aborts the vanilla operation
+```
+
+On this demo cluster (4/9 data nodes online), run the erasure-codec workaround right after
+`yt_sync.py` and before deploying — the Python variant's section above describes the trap in
+full: set `@erasure_codec = none` and `@hunk_erasure_codec = none` on every table under
+`$YT_DEV_ROOT/state_joiner_go` (queue, consumer, data tables and all pipeline system tables) and
+remount each; a tablet already wedged in a transient state needs `yt unmount-table --force` before
+remounting. In this run the codecs were flipped immediately after bootstrap and nothing wedged.
+
+Recorded from the live run on the demo cluster, `flow_server` built from ytsaurus commit
+`1bdcb82f3ab` (heads/main), first deploy of the companion, exit 0 on
+`I FlowClient Pipeline completed`:
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_go/pipeline"
+completed
+
+$ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_go/output_table]" --format json
+{"UserId":"user-2","Total":30}
+{"UserId":"user-0","Total":10}
+{"UserId":"user-1","Total":20}
+{"UserId":"user-3","Total":40}
+
+$ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_go/user_totals]" --format json
+{"UserId":"user-2","Total":30}
+{"UserId":"user-0","Total":10}
+{"UserId":"user-1","Total":20}
+{"UserId":"user-3","Total":40}
+
+$ yt select-rows "computation_id, name from [$YT_DEV_ROOT/state_joiner_go/pipeline/states]" --format json
+(no rows)
+```
+
+Identical to the C++ and Python variants' output: `(UserId, Total)` sorted is the input amounts,
+the two tables agree because every total the joiner wrote came out of the state the accumulator
+wrote, no row is `-1`, and the pipeline's own `states` table is empty. Timings: runner launched
+14:43:10 UTC → pipeline `working` 14:43:48 → all five jobs completed by 14:44:23 → `completed`
+14:44:35, 85 s end to end — the fastest of the three variants, with the usual shortened Go noise
+profile (the `partial traverse coverage` warnings until the jobs run, and no companion
+`Connection refused` at all: the 18 MB Go binary binds its port instantly, with no bundle to
+unpack). Rerunning means recreating the scenario exactly as described for the C++ variant above
+(`completed` is final, and unregister the consumer before deleting the folder).
