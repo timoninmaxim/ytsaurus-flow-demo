@@ -364,3 +364,111 @@ five input tablets, same ten grouping keys, same assertion.
   delivery semantics.
 - **One worker, one controller.** Upstream runs the same 11-partition layout under its process
   federation.
+
+## Go companion variant
+
+`companion_go/` re-runs the scenario with the batcher and the writer written in **Go**
+(`go.ytsaurus.tech/yt/go/flow`), hosted by the same stock `flow_server` through the same two
+companion host classes. The semantics are the Python variant's — the SDK hands the user code the
+whole mixed-key batch, so the key grouping and the per-group parent scoping are user work — with
+two Go-specific points worth stating:
+
+- **Parent scoping.** `flow.BatchFunction.OnMessages` receives the request's whole message batch,
+  keys mixed, with all of it as the default parent set. One merged output from that collector
+  would be a cross-key merge, so `main.go`'s batcher groups by `msg.Key`'s `group_key` itself and
+  emits each merged message through the fresh collector `out.WithParentIDs(ids...)` returns —
+  parents are exactly that key's messages, the default collector stays unused. Same
+  returns-a-new-collector semantics as Python's `output.set_parent_ids`.
+- **Determinism under swift hosting is not free in Go.** A swift replay must reproduce the same
+  outputs with the same parent sequences in the same order, and two Go defaults work against
+  that: the companion server may call user functions concurrently across requests (the documented
+  contract), and Go map iteration order is randomized. The batcher therefore keeps no mutable
+  state between calls, and the grouping never ranges over a map — group order is first-appearance
+  order kept in a slice, and each group's parent ids and event ids stay in batch order.
+  `TestGroupOrderIsFirstAppearanceOrder` in `main_test.go` pins exactly this; the per-group
+  parent sets are asserted id-by-id in the other tests through `flowtest.Harness`, offline.
+- **The pipeline binary is its own runner**, as in `key_visitor/companion_go`: the same `main`
+  calling `pipeline.Run()` is the companion inside the worker job and the launcher on the dev
+  host. `pipeline_go.yson.template` is accordingly smaller than the C++ and Python specs: no
+  `streams` block (the schemas registered with `pipeline.AddStreams` are injected), no
+  `entrypoint`, no `local_files`, no port counts, no `processing_function` names (the Go SDK
+  dispatches by `computation_id`, so the two startup `Unknown processing function` parseability
+  errors of the C++ run do not appear). Verified against the live run again — the runner did all
+  of it unaided: the stored spec carried the three injected stream schemas,
+  `entrypoint = {executable = "./go_companion"}` + `run_process = %true`, and the worker task ran
+  with `port_count: 3` and a `go_companion` file entry pointing at the uploaded pipeline binary.
+- The Go Flow SDK is not in a tagged `go.ytsaurus.tech/yt/go` release yet, so `go.mod` replaces
+  the module with a sibling source checkout of `github.com/ytsaurus/ytsaurus` (clone it next to
+  this repo, or repoint with `go mod edit -replace`). `./run.sh` does not fit the Go route — it
+  execs `$FLOW_BIN --config <spec>`, while the Go runner is the pipeline binary itself and needs
+  `--flow-bin` on top — so the template is rendered with a one-liner and the binary is launched
+  directly (below).
+- `companion_go/{yt_sync,prepare_data}.py` are the reference bootstrap/seed scripts pointed at
+  the variant's own root `$YT_DEV_ROOT/swift_map_batching_go`; `companion_go/verify.py` carries
+  the unchanged asserts (state `working`, `event_id` set == `range(total)`, zero duplicates,
+  batch_size histogram).
+
+Run, from the repo root:
+
+```bash
+swift_map_batching/companion_go/build.sh       # go build; GO="ya tool go" if there is no system go
+(cd swift_map_batching/companion_go && ${GO:-go} test ./...)   # offline batching-logic tests
+
+python3 swift_map_batching/companion_go/yt_sync.py       # once: objects under swift_map_batching_go/
+python3 swift_map_batching/companion_go/prepare_data.py 2000 0   # insert *before* deploying
+
+cd swift_map_batching
+ALLOW_BATCHING=%true SCENARIO_DIR="$PWD" python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline_go.yson.template > pipeline_go.yson
+./companion_go/swift_map_batching_go --config pipeline_go.yson \
+    --flow-bin ~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped
+                     # execs flow_server; the source is not finite, so it streams until Ctrl-C
+                     # (which only detaches — the pipeline keeps running)
+
+python3 companion_go/verify.py 2000
+cd .. && ./stop.sh swift_map_batching_go       # stops the pipeline, aborts the operation
+```
+
+On this demo cluster (4/9 data nodes), run the erasure-codec workaround right after `yt_sync.py`
+and before deploying: set `@erasure_codec = none` and `@hunk_erasure_codec = none` on every table
+under `$YT_DEV_ROOT/swift_map_batching_go` (queues, consumer and all pipeline system tables) and
+remount each. Without it table writes stall hunting for erasure part replicas; with sync unmount
+some empty system tables still hang in `unmounting` and need `yt unmount-table --force` before
+remounting.
+
+Recorded from the live run on the demo cluster, `flow_server` built from ytsaurus commit
+`1bdcb82f3ab` (heads/main), first wave (2000 events inserted before the deploy):
+
+```
+$ python3 swift_map_batching/companion_go/verify.py 2000
+pipeline state: working
+rows: 2000 distinct: 2000 equals range(2000): True
+duplicated event ids: 0 extra rows: 0 max copies: 1
+batch_size histogram: [(200, 2000)]
+OK: every event delivered exactly once
+```
+
+Identical to the C++ and Python variants' first runs down to the histogram: every one of the ten
+keys was merged whole in a single epoch, so the Go batcher put ten 200-parent messages across the
+swift map. A second wave of 20000 events fed into the running pipeline drained in under ten
+seconds (inserted by 13:31:20 UTC, verified 13:31:26):
+
+```
+$ python3 swift_map_batching/companion_go/verify.py 22000
+pipeline state: working
+rows: 22000 distinct: 22000 equals range(22000): True
+duplicated event ids: 0 extra rows: 0 max copies: 1
+batch_size histogram: [(500, 9000), (250, 3250), (200, 3000), (450, 1800), (150, 1200)]
+OK: every event delivered exactly once
+```
+
+Timings: runner launched 13:28:38 UTC → vanilla operation started immediately → `working`
+13:28:51 → wave 1 fully in the output queue within the next minute. Startup noise matches the
+Python run's shortened profile: no parseability errors, no companion `Connection refused` at all
+(the 18 MB Go binary binds its port instantly, with no bundle to unpack), the usual
+`FlowViewKeeper is not initialized` retryable-error bursts and eight `E FlowClient Failed to
+update pipeline` while the controller publishes `leader_controller_address`, and the
+partial-traverse warnings **bursty, not continuous** — 13:28:56 to 13:29:21, gone once the eleven
+jobs were up. The pause/resume cut and the flag-off contrast were not repeated here: as with the
+Python variant, they exercise the engine's meta setter and merge tracker, which every variant
+shares; what changes is only where the merge is computed.
