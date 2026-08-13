@@ -364,3 +364,78 @@ five input tablets, same ten grouping keys, same assertion.
   delivery semantics.
 - **One worker, one controller.** Upstream runs the same 11-partition layout under its process
   federation.
+
+## Python companion variant
+
+`companion_py/` re-runs the scenario with the batcher and the writer written in **Python**, hosted
+by the same stock `flow_server` through the same two companion host classes — so this variant
+answers one question the C++ one cannot: does the *Python* SDK express a merging batch function,
+i.e. an output with several parents, the thing `allow_batching_with_relaxed_guarantees` exists
+for? It does, with one load-bearing difference in who does the key grouping:
+
+- **In the C++ SDK the host groups by key; in Python the user code does.** The C++
+  `IKeyedBatchProcessFunction` is invoked once per key with the parents already set to that key's
+  messages. The Python `BatchFunction.on_messages` gets the request's *whole* message batch, keys
+  mixed, with all of it as the default parent set — one merged output from that collector would
+  be a cross-key merge, which is not what the C++ variant computes. So `main.py`'s `Batcher`
+  groups by `message.key["group_key"]` itself and binds each merged output to exactly its key
+  group via `output.set_parent_ids([...])`, reproducing the keyed-adapter semantics by hand. The
+  grouping is insertion-ordered, hence deterministic in the batch, as swift hosting requires.
+- `pipeline_py.yson.template` — same graph and host classes as `pipeline.yson.template`, under its
+  own root `$YT_DEV_ROOT/swift_map_batching_py`; the companion delivery is the launcher + bundle
+  pair from `key_visitor/companion_py` (`entrypoint = ./py_companion`, two `local_files`).
+- **`processing_function` is omitted.** The Python SDK dispatches by `computation_id`, so the spec
+  does not name the functions — and as a side effect the two startup
+  `E SimpleRunner Found specs parseability error / Unknown processing function` lines of the C++
+  run (the stock binary failing to resolve the C++ class names locally) do not appear at all.
+- `companion_py/{yt_sync,prepare_data}.py` are the reference bootstrap/seed scripts pointed at the
+  `_py` root; `companion_py/verify.py` is the README's verification snippet as a script (state
+  must be `working`, `event_id` set == `range(total)`, zero duplicates, batch_size histogram) —
+  the asserts are unchanged.
+
+Run, from the repo root:
+
+```bash
+swift_map_batching/companion_py/build.sh          # companion_bundle.tgz: CPython + SDK + main.py
+python3 swift_map_batching/companion_py/yt_sync.py       # once: objects under swift_map_batching_py/
+python3 swift_map_batching/companion_py/prepare_data.py 2000 0   # insert *before* deploying
+
+ALLOW_BATCHING=%true FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh swift_map_batching py
+
+python3 swift_map_batching/companion_py/verify.py 2000
+./stop.sh swift_map_batching_py                   # stops the pipeline, aborts the operation
+```
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`,
+first wave (2000 events inserted before the deploy):
+
+```
+$ python3 swift_map_batching/companion_py/verify.py 2000
+pipeline state: working
+rows: 2000 distinct: 2000 equals range(2000): True
+duplicated event ids: 0 extra rows: 0 max copies: 1
+batch_size histogram: [(200, 2000)]
+OK: every event delivered exactly once
+```
+
+Identical to the C++ variant's first run down to the histogram: every one of the ten keys was
+merged whole in a single epoch, so the Python batcher put ten 200-parent messages across the
+swift map. A second wave of 20000 events fed into the running pipeline drained in under 25 s:
+
+```
+$ python3 swift_map_batching/companion_py/verify.py 22000
+pipeline state: working
+rows: 22000 distinct: 22000 equals range(22000): True
+duplicated event ids: 0 extra rows: 0 max copies: 1
+batch_size histogram: [(500, 12000), (200, 3000), (1000, 3000), (250, 1250), (150, 750)]
+OK: every event delivered exactly once
+```
+
+Timings: vanilla operation 08:10:04 → `working` 08:10:22 → all eleven jobs 08:10:47. Startup
+noise matches the C++ run minus the two parseability errors (see above); the companion
+`Connection refused` dial flood lasted ~4 s (08:10:35–08:10:39) — a touch longer than the C++
+companion's ~2 s, since the 112 MB Python bundle unpacks first. The pause/resume cut and the
+flag-off contrast were not repeated here: they exercise the engine's meta setter and merge
+tracker, which this variant shares with the C++ one; what changes is only where the merge is
+computed.
