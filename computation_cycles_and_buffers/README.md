@@ -264,3 +264,93 @@ names, same 1000 messages, same assertion.
 - **The reader gets `desired_partition_count = 1`** in the dynamic spec, where upstream leaves
   `parameters = {}`. It is moot with a single-tablet input queue, and only makes the intent
   explicit alongside the other three computations.
+
+## Python companion variant
+
+`companion_py/` re-runs the scenario with all six computations written in **Python**, hosted by
+the same stock `flow_server` through the same four companion host classes — the host-class
+mapping of the C++ variant carries over computation by computation:
+`TSwiftOrderedSourceCompanionComputation` drives `ReadData`, `TTransformCompanionComputation`
+drives the two transforms and the reducer, and `TSwiftMapCompanionComputation` drives the two
+swift maps. The cycle needs nothing from the SDK at all: it is spec-level stream topology
+(`input_stream_ids` / `output_stream_ids` / `streams_dependency`), and `pipeline_py.yson.template`
+carries it over unchanged. `companion_py/main.py` registers the six functions —
+`CyclePassthrough` four times under four ids, the Python counterpart of registering
+`TCyclePassthroughFunction` four times — and the companion delivery is the launcher + bundle pair
+from `word_count_sync/companion_py` (`entrypoint = ./py_companion`, two `local_files`, worker
+`port_count = 3`).
+
+Deliberate differences against the C++ variant — the asserts are unchanged:
+
+- **The routing tables travel in the spec's `parameters`, not in
+  `processing_function_parameters`.** The Python SDK reads a computation's parameters from
+  `computations/<id>/parameters` (via `ctx.parameters`), so `passthrough_rules` and
+  `sleep_per_message` moved one level up, next to `processing_mode`. Unrecognized keys in
+  `parameters` are accepted silently, so the host classes do not object.
+- **`processing_function` is omitted.** The Python SDK dispatches by `computation_id`
+  (`pipeline.add("transform_a", …)`), so the spec does not name the functions — and the six
+  startup `E SimpleRunner Found specs parseability error` lines of the C++ run do not appear.
+- **The reducer groups by key itself.** The C++ keyed-batch adapter groups the epoch's input by
+  key before invoking `ProcessKey`; the Python `BatchFunction` gets the request's whole message
+  batch with keys mixed, so `ReduceCount.on_messages` does the grouping (one group here — the
+  1000 rows are identical) and adds each group's size to its key's count.
+- **External state is written back explicitly.** Only `state.set(...)` persists the external
+  state "/state"; the reducer reads `state.get("count")`, builds the incremented payload and
+  `set`s it.
+- **A missing passthrough rule raises `RuntimeError`**, the port of the C++ variant's throw —
+  with the same retried-forever caveat.
+
+`build.sh` follows `word_count_sync/companion_py/build.sh`: it reuses the already-built
+`ytsaurus-flow-companion` wheel from `companion_python/build/wheels/` when present and otherwise
+builds it from `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package`.
+
+Run, from the repo root:
+
+```bash
+computation_cycles_and_buffers/companion_py/build.sh   # companion_bundle.tgz: CPython + SDK + main.py
+python3 computation_cycles_and_buffers/companion_py/yt_sync.py  # once: objects under computation_cycles_py/
+
+python3 -c 'import json, sys
+for _ in range(1000):
+    sys.stdout.write(json.dumps({"data": "payload", "$$tablet_index": 0}) + "\n")' \
+  | yt insert-rows --format json "$YT_DEV_ROOT/computation_cycles_py/input_queue"
+
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh computation_cycles_and_buffers py    # stock binary; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/computation_cycles_py/pipeline"
+yt select-rows "* from [$YT_DEV_ROOT/computation_cycles_py/state]" --format json
+./stop.sh computation_cycles_py                   # aborts the vanilla operation
+```
+
+Recorded from the live runs on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`.
+The plain run, first deploy:
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/computation_cycles_py/pipeline"
+completed
+
+$ yt select-rows "* from [$YT_DEV_ROOT/computation_cycles_py/state]" --format json
+{"hash":8436339620933999394,"data":"payload","count":1000}
+```
+
+One row, `count == 1000` — the same assertion as the C++ variant, met from Python, in ~2 min
+(deploy 08:39:03 → `completed` 08:41:08).
+
+The **cut-buffers half** was reproduced on a recreated scenario with the pause sequence from the
+C++ section above (poll the count every three seconds, pause as soon as it is non-zero):
+
+```
+08:43:59 count=1
+pause requested at count=1
+08:44:06 state=paused
+{"hash":8436339620933999394,"data":"payload","count":2}
+start requested
+...
+08:46:46 completed
+{"hash":8436339620933999394,"data":"payload","count":1000}
+```
+
+Paused with two of 1000 messages committed and the rest in flight or buffered inside the cycle;
+after `start-pipeline` the run completed two and a half minutes later at exactly 1000 —
+exactly-once held across the cut with the user code out of process in Python.

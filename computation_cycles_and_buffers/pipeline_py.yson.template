@@ -1,0 +1,197 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/computation_cycles_py/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TSwiftOrderedSourceCompanionComputation";
+                "output_stream_ids" = ["reader_output"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/computation_cycles_py/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/computation_cycles_py/consumer";
+                            "finite" = %true;
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+            "transform_a" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(data)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "data"; "type" = "string"; "required" = %true;};
+                ];
+                "input_stream_ids" = ["reader_output"; "sb1"];
+                "output_stream_ids" = ["ta1"; "ta2"];
+                "streams_dependency" = {
+                    "ta1" = ["reader_output"];
+                    "ta2" = ["reader_output"; "sb1"];
+                };
+                "parameters" = {
+                    "processing_mode" = "exactly_once";
+                    "passthrough_rules" = {
+                        "reader_output" = "ta1";
+                        "sb1" = "ta2";
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+            "swift_map_a" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TSwiftMapCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(data)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "data"; "type" = "string"; "required" = %true;};
+                ];
+                "input_stream_ids" = ["ta1"];
+                "output_stream_ids" = ["sa1"];
+                "streams_dependency" = {
+                    "sa1" = ["ta1"];
+                };
+                "parameters" = {
+                    "passthrough_rules" = {
+                        "ta1" = "sa1";
+                    };
+                    "sleep_per_message" = {
+                        "ta1" = 6;
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+            "transform_b" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(data)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "data"; "type" = "string"; "required" = %true;};
+                ];
+                "input_stream_ids" = ["sa1"];
+                "output_stream_ids" = ["tb1"];
+                "streams_dependency" = {
+                    "tb1" = ["sa1"];
+                };
+                "parameters" = {
+                    "processing_mode" = "exactly_once";
+                    "passthrough_rules" = {
+                        "sa1" = "tb1";
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+            "swift_map_b" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TSwiftMapCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(data)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "data"; "type" = "string"; "required" = %true;};
+                ];
+                "input_stream_ids" = ["tb1"];
+                "output_stream_ids" = ["sb1"];
+                "streams_dependency" = {
+                    "sb1" = ["tb1"];
+                };
+                "parameters" = {
+                    "passthrough_rules" = {
+                        "tb1" = "sb1";
+                    };
+                    "sleep_per_message" = {
+                        "tb1" = 12;
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+            "reducer" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(data)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "data"; "type" = "string"; "required" = %true;};
+                ];
+                "input_stream_ids" = ["ta2"];
+                "output_stream_ids" = [];
+                "parameters" = {
+                    "processing_mode" = "exactly_once";
+                };
+                "external_state_managers" = {
+                    "/state" = {
+                        "external_state_manager_class_name" = "NYT::NFlow::TSimpleExternalStateManager";
+                        "parameters" = {
+                            "path" = "${YT_DEV_ROOT}/computation_cycles_py/state";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+        };
+        "streams" = {
+            "reader_output" = {"schema" = [{"name" = "data"; "type" = "string"; "required" = %true;};];};
+            "ta1" = {"schema" = [{"name" = "data"; "type" = "string"; "required" = %true;};];};
+            "sa1" = {"schema" = [{"name" = "data"; "type" = "string"; "required" = %true;};];};
+            "tb1" = {"schema" = [{"name" = "data"; "type" = "string"; "required" = %true;};];};
+            "sb1" = {"schema" = [{"name" = "data"; "type" = "string"; "required" = %true;};];};
+            "ta2" = {"schema" = [{"name" = "data"; "type" = "string"; "required" = %true;};];};
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
+                "parameters" = {
+                    "entrypoint" = {
+                        "executable" = "./py_companion";
+                    };
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {"parameters" = {"desired_partition_count" = 1;};};
+            "transform_a" = {"max_rows_per_batch" = 30; "parameters" = {"desired_partition_count" = 1;};};
+            "transform_b" = {"max_rows_per_batch" = 30; "parameters" = {"desired_partition_count" = 1;};};
+            "reducer" = {"max_rows_per_batch" = 30; "parameters" = {"desired_partition_count" = 1;};};
+        };
+        "job_tracker" = {
+            "buffer_state_manager" = {
+                "input_buffer" = {"job_guarantee" = "50";};
+                "output_buffer" = {"job_guarantee" = "50";};
+                "demand_window" = "20s";
+            };
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "controller" = {"count" = 1; "port_count" = 2;};
+        "worker" = {
+            "count" = 1;
+            "port_count" = 3;
+            "local_files" = {
+                "py_companion" = "${SCENARIO_DIR}/companion_py/py_companion";
+                "companion_bundle.tgz" = "${SCENARIO_DIR}/companion_py/companion_bundle.tgz";
+            };
+        };
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
