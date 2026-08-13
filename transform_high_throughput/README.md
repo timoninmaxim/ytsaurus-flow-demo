@@ -148,3 +148,120 @@ On this run the controller briefly stopped answering right as `stop.sh` sampled 
 took its no-controller branch and went straight to aborting the vanilla operation — the pipeline's
 *persisted* state therefore remains `working`, and a later `./run.sh` of the same scenario resumes
 it. When the controller does answer, `stop.sh` performs the graceful `stop-pipeline` first.
+
+## Python companion variant
+
+`companion_py/` re-runs the benchmark with the per-key-state reducer written in **Python**, hosted
+by the stock `flow_server` — no custom binary. The pipeline shape is the same: a two-partition
+reader feeding a two-partition transform (`farm_hash(key)` grouping, per-key state in the built-in
+`states` table) whose output the async queue sink writes to a two-tablet queue, on one worker.
+`main.py` registers the single `Reducer` computation with the Flow Python companion SDK
+(`BatchFunction`, per-key internal state `"state"` declared in `parameters/internal_states`); the
+reader stays native (`TSwiftPassthroughOrderedSourceComputation`), so the Python code sits exactly
+where the C++ user code sat — on the transform path. The companion delivery is the launcher +
+bundle pair the other `companion_py` scenarios use (`entrypoint = ./py_companion`, two
+`local_files`, worker `port_count = 3`).
+
+Two deliberate adaptations against the C++ variant:
+
+- **The input is a queue fed from the dev host, not `TRandomSource`** — the stock binary does not
+  link the random connector. `companion_py/feed.py` stands in for the generator and mirrors its
+  distributions: keys from the normal approximation of Poisson(1000000) (≈6–8 thousand distinct
+  keys, exactly like `message_key_range = 1000000`), 100-byte payloads, rows alternating between
+  the two input tablets (the two source partitions). For the figure to be about the *pipeline*,
+  the feed must outrun it: `--rate 15000` (~1.6× the C++ figure) held with no "behind" warnings on
+  the measured run, and `companion_py/measure.py` fails the measurement outright unless the input
+  backlog stays non-empty through the window.
+- **The measurement is the reference `measure.py`** loaded as a module with its paths switched to
+  this variant's root, plus the two checks a fed pipeline owes on top: the backlog condition above
+  (rows written minus the consumer's committed offsets), and the per-key state count filtered to
+  `computation_id = 'Reducer'` (the `states` table also holds the engine's source-progress rows).
+  One practical amendment: the selects pass an explicit `input_row_limit`, because a queue fed at
+  15K rows/s crosses the server's default 1M-row select scan limit within minutes.
+
+### Run
+
+From the repo root, with your env file sourced:
+
+```bash
+transform_high_throughput/companion_py/build.sh          # companion_bundle.tgz: CPython + SDK + main.py
+python3 transform_high_throughput/companion_py/yt_sync.py     # once: pipeline node, queues, consumer, producer
+```
+
+On a cluster with fewer than six online data nodes, clear the erasure codec the pipeline preset
+puts on the system tables (see `state_joiner/README.md` for the full story of this sharp edge)
+before the first deploy:
+
+```bash
+for t in $(yt find "$YT_DEV_ROOT/transform_high_throughput_py" --type table); do
+    yt set "$t/@erasure_codec" none
+    yt set "$t/@hunk_erasure_codec" none
+    yt remount-table "$t"
+done
+```
+
+Then deploy and, from a second terminal, feed and measure:
+
+```bash
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh transform_high_throughput py     # deploy + stream the controller log; Ctrl-C detaches
+
+python3 transform_high_throughput/companion_py/feed.py --duration 900   # keep it running…
+python3 transform_high_throughput/companion_py/measure.py               # …while this measures
+
+./stop.sh transform_high_throughput_py        # stop the pipeline + abort the vanilla operation
+```
+
+### Observed output
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~1bdcb82f3ab63fcb`,
+one worker, feed sustained at ~15,000 rows/s (feeder log: `fed 2505000 rows, 15069 rows/s
+achieved`, zero "behind" warnings over the whole run). The pipeline reached `working` in ~16
+seconds and held it before, through, and after the window:
+
+```
+$ python3 transform_high_throughput/companion_py/measure.py 60
+pipeline state: working
+t0 sample: 698475 rows, 86385673 cumulative bytes, input backlog 1900803 rows; measuring for 60s ...
+throughput: 5726 rows/s, 0.672 MB/s (+345000 rows in 60.2s, queue at 1043475 rows)
+input backlog: 1900803 rows at t0 -> 2420475 rows at t1
+ok: states table has 7262 Reducer keys
+OK: sustained `working`, 5726 rows/s with a non-empty input backlog, states table has 7262 keys
+```
+
+So the same transform path with the user code in Python sustained **~5,700 rows/s (~0.67 MB/s)**
+against the C++ variant's **~9,500 rows/s (~1.12 MB/s)** — about **60%** of the C++ figure, with
+identical per-row data weight (117.6 bytes/row both ways). The backlog *grew* by half a million
+rows during the window, so the figure is the pipeline's ceiling, not the feeder's.
+
+Where the time goes, from the flow view's per-epoch timings after ~20 minutes of load — the
+Reducer partitions spend ~74% of epoch wall time in `Process` (the companion call path), and the
+Reader partitions spend ~78% blocked on `Distribute.OutputBufferOverflow`, i.e. waiting for the
+Reducer to drain — the Python transform is the bottleneck, everything upstream idles behind it:
+
+```
+Reader  total=81.1s {'Distribute.OutputBufferOverflow': 63.2, 'Commit': 8.5, 'Input.Fetch': 3.5, ...}
+Reducer total=81.7s {'Process': 60.4, 'Commit': 7.8, 'FinalizeTransaction': 3.7, ...}
+```
+
+The companion ran as a **single CPython process**: the SDK's auto-sizing
+(`companion_process_count = 0`, the default) resolves the process count from the job's cgroup CPU
+quota, and this cluster's job environment reports no CPU limit, which auto-sizing deliberately
+treats as "do not fan out" (worker job stderr):
+
+```
+INFO:...companion.sizing:Resolved CPU quota from cgroup v1 (Quota: inf, Source: /sys/fs/cgroup/cpu)
+```
+
+So the 5,700 rows/s figure is one Python interpreter on the whole transform path — the honest
+stock-defaults number, not the SDK's multi-process ceiling.
+
+The per-key state, filtered as the C++ check is (the same key neighbourhood around one million;
+the companion's internal state is engine-opaque bytes, so it lands in the `states` row as a YSON
+payload string rather than the C++ variant's structured map):
+
+```
+$ yt select-rows "computation_id, key, state from [...pipeline/states] where computation_id = 'Reducer' limit 2" --format json
+{"computation_id":"Reducer","key":[798995128167919,"998816"],"state":{"payload":"{\"count\"=200;\"last_data\"=\"msnvv…\";}"}}
+{"computation_id":"Reducer","key":[3411560120071481,"999036"],"state":{"payload":"{\"count\"=276;\"last_data\"=\"pvvxd…\";}"}}
+```
