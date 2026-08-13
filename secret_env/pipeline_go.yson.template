@@ -1,0 +1,91 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/secret_env_go/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "output_stream_ids" = ["events"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/secret_env_go/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/secret_env_go/consumer";
+                            "finite" = %true;
+                        };
+                    };
+                };
+            };
+            "checker" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(key)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "key"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["events"];
+                "output_stream_ids" = ["observations"];
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["observations"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/secret_env_go/output_queue";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
+                "parameters" = {};
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 1;
+                };
+            };
+            "checker" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 1;
+                };
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "secret_env" = ["YT_MY_SECRET"];
+        "controller" = {"count" = 1; "port_count" = 2;};
+        "worker" = {"count" = 1;};
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}

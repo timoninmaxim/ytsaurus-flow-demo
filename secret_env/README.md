@@ -129,3 +129,124 @@ YT_MY_SECRET did not reach the vanilla job as expected (length 5, secure vault c
 That message never prints the value, and its vault-key list separates the two links of the chain:
 the vault carried `YT_MY_SECRET`, so delivery into the job worked and only the value was wrong. An
 empty vault list would have meant the secret never reached the job at all.
+
+## Go companion variant
+
+The same subject again, with a launcher-side wrinkle the other variants do not have: the user code
+is Go (`go.ytsaurus.tech/yt/go/flow`), and **the pipeline binary is its own runner** — the same
+`main` calling `pipeline.Run()` is run on the dev host to deploy and served inside the worker job
+as the companion. Deploying, the Go runner enriches the spec and then *replaces itself* with
+`flow_server` (`yt/go/flow/runner/runner.go`: `syscall.Exec(flowBin, …, os.Environ())`), so the
+secret exported in your shell must survive that exec before the usual chain even starts.
+
+**Verdict: it does, end to end.** The chain for this shape, in the engines' code:
+
+1. `syscall.Exec` hands the launcher's **full environment** to `flow_server` — `os.Environ()` is
+   passed explicitly, nothing is filtered.
+2. `flow_server` (runner mode) reads each name declared in the spec's `secret_env` from that
+   inherited environment into the operation's secure vault
+   (`yt/yt/flow/library/cpp/vanilla/spec.cpp`, `InjectSecureVaultFromEnv`) — and validates the
+   names **up front**, before uploading anything (`ValidateSecretEnv` in
+   `library/cpp/runner/vanilla_launcher.cpp`).
+3. Inside the job YT delivers the vault as `YT_SECURE_VAULT` and Flow re-exports every entry as a
+   plain env var (`library/cpp/runner/init.cpp`, `Initialize`) — unchanged from the C++ variant.
+4. The worker spawns the shipped Go binary again — now as the companion — with a full copy of its
+   own environment (`library/cpp/companion/companion_process_manager.cpp`, `copyEnv = true`), so
+   `os.Getenv` in the Go function sees both the re-exported secret and the raw vault text.
+
+The moving parts, alongside the C++ and Python variants:
+
+- `companion_go/main.go` — `secretChecker`, a `flow.RowFunction` that *reports* like the Python
+  variant: for every input message it writes `secret` (the value of `YT_MY_SECRET` in its own
+  environment) and `vault_carries_name` (whether the inherited `YT_SECURE_VAULT` text mentions the
+  name; a substring probe, diagnostic only) into the output queue. Verification matches the value
+  from outside — it can only have come from the companion's environment. (The demo value lands in
+  an output table; report a hash instead if your secret is real.)
+- `pipeline_go.yson.template` — the Python variant's topology (native finite `TQueueSource` reader
+  → `TTransformCompanionComputation` → `TSyncQueueSink`) minus everything `pipeline.Run()` injects
+  itself: no `streams` block (the registered schemas are injected), no `entrypoint`, no
+  `local_files`, no worker `port_count`. The `secret_env = ["YT_MY_SECRET"]` line is unchanged:
+  the launcher→vault→job mechanics are engine surface the Go runner shape does not touch.
+- `companion_go/main_test.go` — the checker offline through `flowtest.Harness`, pinning the
+  reported columns for the correct, wrong, and absent environment shapes (`t.Setenv`, no cluster).
+- `companion_go/yt_sync.py` — bootstrap under its own root `$YT_DEV_ROOT/secret_env_go`.
+- The Go Flow SDK is not in a tagged `go.ytsaurus.tech/yt/go` release yet, so `go.mod` replaces
+  the module with a sibling source checkout of `github.com/ytsaurus/ytsaurus`. `./run.sh` does not
+  fit the Go route — it execs `$FLOW_BIN --config <spec>`, while the Go runner is the pipeline
+  binary itself and needs `--flow-bin` on top — so the template is rendered with a one-liner and
+  the binary is launched directly (below).
+
+### Run
+
+```bash
+secret_env/companion_go/build.sh          # go build; GO="ya tool go" if there is no system go
+(cd secret_env/companion_go && ${GO:-go} test ./...)   # offline checker tests
+
+python3 secret_env/companion_go/yt_sync.py   # once: objects under secret_env_go/
+
+echo '{"key"="pos-1"};{"key"="pos-2"};{"key"="pos-3"}' | \
+    yt insert-rows "$YT_DEV_ROOT/secret_env_go/input_queue" --format yson
+
+export YT_MY_SECRET=5
+cd secret_env
+python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline_go.yson.template > pipeline_go.yson
+./companion_go/secret_env_go --config pipeline_go.yson \
+    --flow-bin ~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped
+                                        # execs flow_server; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/secret_env_go/pipeline"
+yt select-rows "key, secret, vault_carries_name from [$YT_DEV_ROOT/secret_env_go/output_queue]" --format json
+cd .. && ./stop.sh secret_env_go        # aborts the vanilla operation ("completed" is final)
+```
+
+On this demo cluster (degraded data nodes), run the erasure-codec workaround right after
+`yt_sync.py` and before deploying: set `@erasure_codec = none` and `@hunk_erasure_codec = none` on
+every table under `$YT_DEV_ROOT/secret_env_go` (queues, consumer and all pipeline system tables)
+and remount each (`yt unmount-table --force` first if one wedges in `unmounting`). Without it
+table writes stall hunting for erasure part replicas.
+
+Recorded from the live run on the demo cluster, `flow_server` built from ytsaurus commit
+`1bdcb82f3ab` (heads/main): runner launched 19:20:54 → vanilla operation started 19:20:56 →
+pipeline `working` 19:21:08 → `completed` 19:22:07, 73 s end to end; the persisted
+`vanilla/current_spec` again keeps only the *name* (`secret_env = ['YT_MY_SECRET']`,
+`secure_vault = None`), and the stored pipeline spec shows what the Go runner injected
+(`entrypoint = {executable = "./go_companion"}; run_process = %true`, worker `port_count: 3` with
+a `go_companion` file entry):
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/secret_env_go/pipeline"
+completed
+
+$ yt select-rows "key, secret, vault_carries_name from [$YT_DEV_ROOT/secret_env_go/output_queue]" --format json
+{"key":"pos-1","secret":"5","vault_carries_name":"true"}
+{"key":"pos-2","secret":"5","vault_carries_name":"true"}
+{"key":"pos-3","secret":"5","vault_carries_name":"true"}
+```
+
+`secret = "5"` is the launcher's value read out of `os.Getenv` inside the Go companion — after
+surviving the launcher's own exec into `flow_server` on the dev host.
+
+### The failure paths, checked as well
+
+With `YT_MY_SECRET` unset the exec into `flow_server` happens anyway (the Go runner knows nothing
+of `secret_env`), and `flow_server` refuses **before uploading anything** — the name check runs up
+front, ahead of the vault assembly:
+
+```
+(NYT::TErrorException) Secret environment variable "YT_MY_SECRET" (declared in "secret_env") is not set
+```
+
+With a wrong value (`YT_MY_SECRET=wrong`) the pipeline still completes — this variant reports
+rather than asserts — and the observed column tracks the launcher verbatim, so verification fails
+on the value:
+
+```
+{"key":"neg-1","secret":"wrong","vault_carries_name":"true"}
+{"key":"neg-2","secret":"wrong","vault_carries_name":"true"}
+```
+
+(As in the Python variant, that second run needs a fresh pipeline node: `completed` is final, so
+`yt remove --recursive .../secret_env_go/pipeline` — after `./stop.sh secret_env_go` releases the
+controller's lock on it — then re-run `yt_sync.py` and re-apply the erasure workaround; the queues
+and the consumer offsets survive, so only the newly inserted rows are read.)
