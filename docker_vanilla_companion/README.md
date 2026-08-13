@@ -81,7 +81,7 @@ variable unset the runner refuses to launch.
 ### `pipeline.yson.template` — SDK as a job file
 
 The default here, because it assumes no registry at all. `build.sh` produces `companion_sdk.tgz`
-(~11 MB) by installing the companion package and its dependencies **inside the job image**, so the
+(~10 MB) by installing the companion package **inside the job image**, so the
 native wheels (grpcio, protobuf) match the interpreter that will import them. `py_companion` — the
 entrypoint the worker spawns — unpacks it on first start, puts it on `PYTHONPATH` and execs
 `main.py`.
@@ -90,7 +90,7 @@ Note it packs `site-packages`, not a virtualenv: a venv directory is not relocat
 same reason Spark's `venv-pack` requires the interpreter to be present on every node already.
 
 Bundling the interpreter too, which is what a pipeline must do when it cannot choose its image,
-costs about ten times as much: ~116 MB against ~11 MB, uploaded on every deploy.
+costs about ten times as much: ~116 MB against ~10 MB, uploaded on every deploy.
 
 ## Run
 
