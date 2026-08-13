@@ -241,3 +241,122 @@ the ytsaurus repo. Same input, same expected counts, same skipped words.
   too and is worth a word: it only affects bulk readers over a dynamic table, while the
   `select-rows` this scenario verifies with always sees the dynamic stores — so the checks below
   are exact without it.
+
+## Go companion variant
+
+`companion_go/` re-runs the scenario with the reader and the counter written in **Go**
+(`go.ytsaurus.tech/yt/go/flow`), hosted by the same stock `flow_server` through the same two
+companion host classes — including the swift source: `TSwiftOrderedSourceCompanionComputation`
+drives `flow.NewRowSourceComputation("reader", …)` exactly as it drives the C++ and Python
+readers, so this variant puts a Go function on the source path, not just on the transform path,
+and is the first of the Go ports to do so (`key_visitor` and `swift_map_batching` kept their
+readers native). The topology — the external state `/state` behind the `word_counts` table and
+the skipped-words stream written by the sync sink inside the same epoch transaction — and the
+choreography are unchanged; everything runs under its own root `$YT_DEV_ROOT/word_count_sync_go`.
+
+**The pipeline binary is its own runner**, as in the other `companion_go` variants: the same
+`main` calling `pipeline.Run()` is the companion served inside the worker job and the launcher
+run on the dev host. `pipeline_go.yson.template` is accordingly smaller than the C++ and Python
+specs: no `streams` block (the schemas registered with `pipeline.AddStreams` are injected), no
+`entrypoint`, no `local_files`, no worker `port_count`, no `processing_function` names (the Go
+SDK dispatches by `computation_id`). Verified against the live run once more — the runner did
+all of it unaided: the stored spec carried the two injected stream schemas and
+`entrypoint = {executable = "./go_companion"}` + `run_process = %true`, and the worker task ran
+with `port_count: 3` and a `go_companion` file entry pointing at the uploaded pipeline binary.
+
+Adaptations against the C++ variant, stated explicitly — the asserts are unchanged:
+
+- **The stop words travel in the spec's `parameters`, as in the Python variant.** The Go SDK
+  registers computations and streams only; there is no counterpart of the C++
+  `TPipeline::AddResource`, so the `StopWords` resource is gone from the spec and
+  `computations/counter/parameters` carries both `min_word_length` and `stop_words`, read via
+  `rt.Parameters()`. One consequence worth knowing: the server-side host class does not
+  recognize user parameters, so the runner logs a single startup
+  `E SimpleRunner Found specs parseability error — Static spec has unrecognized fields` naming
+  exactly these two fields. Like the C++ variant's `Unknown processing function` errors, it is
+  logged unconditionally and refuses nothing (`abort_on_specs_parseability_error` defaults to
+  `%false`); the parameters do reach the companion — the output tables prove it.
+- **"No count yet" is not an absent state row.** The external-state accessor's
+  `state.Get()` returns `ok` for a key that was never counted: live, the state manager hands
+  the companion a present row with the key columns set and `count` **null**. The null check
+  must therefore be per column (`row.Has("count")`) — the direct translation of the C++
+  `GetColumnValue<std::optional<i64>>("count").value_or(0)`. The first deploy of this variant
+  read `row.Int64("count")` whenever `Get()` said `ok` and looped forever on the retryable
+  `flow: null value: column "count"` — a poison batch exactly as described for the C++ variant
+  above, invisible offline because `flowtest.Harness` models an unseeded key as *no row at all*
+  (`Get()` returns `false`). `TestCountingToleratesNullCount` in `main_test.go` now pins the
+  live shape.
+- **Only `Set` persists the state.** As in Python — and unlike the internal-state
+  `OpenYSONState` accessor, which auto-flushes mutations — the external-state accessor writes
+  back only what `state.Set(row)` is given; the counter rebuilds the row with
+  `state.Builder().Set("count", count+1)`.
+- The Go Flow SDK is not in a tagged `go.ytsaurus.tech/yt/go` release yet, so `go.mod` replaces
+  the module with a sibling source checkout of `github.com/ytsaurus/ytsaurus` (clone it next to
+  this repo, or repoint with `go mod edit -replace`). `./run.sh` does not fit the Go route — it
+  execs `$FLOW_BIN --config <spec>`, while the Go runner is the pipeline binary itself and
+  needs `--flow-bin` on top — so the template is rendered with a one-liner and the binary is
+  launched directly (below).
+
+The word logic is proven offline first: `companion_go/main_test.go` drives both computations
+through `flowtest.Harness` (split order, stop-word filtering, skipped-words emission, counting
+over prior external state, the null-count row shape, and an end-to-end pipe of the scenario's
+two lines asserting exactly the two tables below) — no cluster needed.
+
+Run, from the repo root:
+
+```bash
+word_count_sync/companion_go/build.sh       # go build; GO="ya tool go" if there is no system go
+(cd word_count_sync/companion_go && ${GO:-go} test ./...)   # offline word-logic tests
+
+python3 word_count_sync/companion_go/yt_sync.py   # once: objects under word_count_sync_go/
+
+printf '%s\n' '{"text": "hello to a world", "$$tablet_index": 0}' \
+              '{"text": "flow is on it", "$$tablet_index": 0}' \
+    | yt insert-rows --format json "$YT_DEV_ROOT/word_count_sync_go/input_queue"
+
+cd word_count_sync
+SCENARIO_DIR="$PWD" python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline_go.yson.template > pipeline_go.yson
+./companion_go/word_count_sync_go --config pipeline_go.yson \
+    --flow-bin ~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped
+                                        # execs flow_server; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_go/pipeline"
+yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_go/word_counts]" --format json
+yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_go/skipped_words]" --format json
+cd .. && ./stop.sh word_count_sync_go   # aborts the vanilla operation
+```
+
+On this demo cluster (4/9 data nodes), run the erasure-codec workaround right after `yt_sync.py`
+and before deploying: set `@erasure_codec = none` and `@hunk_erasure_codec = none` on every table
+under `$YT_DEV_ROOT/word_count_sync_go` (queues, consumer and all pipeline system tables) and
+remount each. Without it table writes stall hunting for erasure part replicas; with sync unmount
+some empty system tables still hang in `unmounting` and need `yt unmount-table --force` before
+remounting.
+
+Recorded from the live run on the demo cluster, `flow_server` built from ytsaurus commit
+`1bdcb82f3ab` (heads/main), clean deploy of the fixed companion:
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_go/pipeline"
+completed
+
+$ yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_go/word_counts]" --format json
+{"word":"hello","count":1}
+{"word":"world","count":1}
+
+$ yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_go/skipped_words]" --format json
+{"word":"a","length":1}
+{"word":"is","length":2}
+{"word":"it","length":2}
+{"word":"on","length":2}
+```
+
+Identical to the C++ and Python variants' output, and the two tables again prove the stop words
+were applied — this time from `rt.Parameters()`: `flow` is four letters long, so without the
+filter it would be counted, and `to` would show up among the skipped words. Neither appears.
+Timings: runner launched 14:09:29 UTC → pipeline `working` 14:09:44 → `completed` 14:10:43,
+74 s end to end. Startup noise matches the other Go runs' shortened profile: the one
+`unrecognized fields` parseability line described above and **no** companion
+`Connection refused` at all — the 18 MB Go binary binds its port instantly, with no bundle to
+unpack.
