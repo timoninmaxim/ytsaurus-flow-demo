@@ -104,3 +104,71 @@ tail of the runner log:
 2026-08-12 23:57:32,434273 I PublicFlowController Job completed (..., ComputationId: tester)
 2026-08-13 02:58:01,146507 I FlowClient Pipeline completed (Pipeline: .../key_visitor/pipeline)
 ```
+
+## Python companion variant
+
+`companion_py/` re-runs the same scenario with the visit tester written in **Python**, hosted
+out-of-process by the **stock** `flow_server` — the route the section above declined for the C++
+case, exercised here on purpose. The topology and choreography are identical; what changes is the
+hosting of `tester`:
+
+- `pipeline_py.yson.template` — same graph, but `tester` is
+  `NYT::NFlow::NCompanion::TTransformCompanionComputation` with the `CompanionManager` resource
+  (`entrypoint = ./py_companion`), `parameters/internal_states = ["user_state"]`, worker
+  `port_count = 3` / controller `2`, and the two `local_files` that deliver the companion into the
+  worker's vanilla job (the launcher + the bundle, as in `companion_python/`).
+- `companion_py/main.py` — `TVisitTesterFunction` re-expressed with the companion SDK: a
+  `RowFunction` whose `on_message` stores the payload in the per-key internal state and whose
+  `on_visit` emits the stored payload with the incremented per-key `visit_index`. The engine side
+  (key tracking, the periodic sweep, the finite final pass) is untouched: the worker forwards each
+  visit to the Python process together with the visited key's state.
+- Everything runs under its own Cypress root, `$YT_DEV_ROOT/key_visitor_py`, so the C++ variant's
+  objects stay inspectable side by side; `companion_py/{yt_sync,prepare_data,verify}.py` are the
+  same bootstrap/seed/assert scripts pointed at that root.
+
+Deliberate differences against the C++ variant — the asserts are unchanged:
+
+- **Schematized streams instead of registered YSON messages.** A pipeline binary of your own
+  registers `TKeyMessage`/`TVisitMessage` types; the stock binary knows no user types, so the spec
+  declares `keys` and `visits` schemas in a `streams` block (same columns) and the Python side
+  reads/writes typed columns (`message.payload["payload"]`, `ctx.message_builder("visits")`).
+- **Explicit state writes.** The C++ state accessor persists in-place mutations; in the Python SDK
+  only `state.set(...)` marks the key's state for write-back — mutating the `get()` result alone
+  would be silently lost.
+- The per-run visit count differs (fewer periodic-pass rows in the recorded run: 27 vs 38); the
+  1..2 `visit_index` spread and every assert are the same.
+
+Run, from the repo root:
+
+```bash
+key_visitor/companion_py/build.sh          # companion_bundle.tgz: CPython runtime + SDK + main.py
+python3 key_visitor/companion_py/yt_sync.py       # once: Cypress objects under key_visitor_py/
+python3 key_visitor/companion_py/prepare_data.py  # 20 keys as v1, then the same 20 as v2
+
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh key_visitor py                # stock binary; returns when the pipeline completes
+
+python3 key_visitor/companion_py/verify.py
+./stop.sh key_visitor_py                   # aborts the vanilla operation
+```
+
+`build.sh` follows `companion_python/build.sh` (see that README for the delivery model); the one
+addition is that it reuses an already-built `ytsaurus-flow-companion` wheel from
+`companion_python/build/wheels/` when present, since the wheel's source package
+(`yt/yt/flow/tools/companion`) is not yet published in the public repo.
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`,
+first deploy, completed in under three minutes:
+
+```
+$ python3 key_visitor/companion_py/verify.py
+ok: pipeline reached `completed`
+ok: all 20 seeded keys were visited
+ok: the latest visit of every key carries the v2 payload
+output rows: 27; per-key max visit_index range: 1..2
+OK: the final key-visitor pass swept the post-completion state of every key
+```
+
+Expected startup noise: for the first ~2 s of the worker job the controller log fills with
+retryable `CompanionInfo ... Connection refused` warnings — the worker polls the companion's gRPC
+port while the bundle is still unpacking. It self-heals as soon as the companion is up.
