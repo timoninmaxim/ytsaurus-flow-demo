@@ -35,11 +35,6 @@ user's code:
 ### What this scenario needs that the repo README does not list
 
 - **`podman` or `docker`** on the dev host, and a registry your cluster can pull from.
-- **A `flow_server` new enough to pass per-task `docker_image` into the vanilla spec.** Without it
-  the field never reaches the operation, the jobs run in the default environment where
-  `/usr/local/bin/python3` does not exist, and the companion fails to start. It and the Dockerfile
-  below come from an ordinary ytsaurus checkout —
-  `git clone https://github.com/ytsaurus/ytsaurus.git` — from commit `c6adf1ad176` onwards.
 
 ## Build the image
 
@@ -140,11 +135,3 @@ Job preparation failed
   Failed to pull docker image
     code    1132
 ```
-
-## What this does not prove
-
-- That `docker_image` combines with anything else that supplies the job root filesystem. It does
-  not: a job gets its filesystem from one mechanism or the other, never both.
-- That a computation with third-party dependencies works. `main.py` imports nothing beyond the SDK;
-  inheriting from the image is documented but not exercised.
-- Anything about registries other than ghcr.io, which is what this was checked against.
