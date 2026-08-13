@@ -104,3 +104,87 @@ tail of the runner log:
 2026-08-12 23:57:32,434273 I PublicFlowController Job completed (..., ComputationId: tester)
 2026-08-13 02:58:01,146507 I FlowClient Pipeline completed (Pipeline: .../key_visitor/pipeline)
 ```
+
+## Go companion variant
+
+`companion_go/` re-runs the same scenario with the visit tester written in **Go**, hosted
+out-of-process by the **stock** `flow_server` through the same companion protocol as the Python
+variant. The topology, choreography and asserts are identical; two things change:
+
+- `companion_go/main.go` — the visit tester with the Go SDK (`go.ytsaurus.tech/yt/go/flow`): a
+  computation implementing `flow.RowFunction` (`OnMessage` stores the payload in the mutable
+  typed state `flow.OpenYSONState[userState]`) and `flow.RowVisitFunction` (`OnVisit` emits the
+  stored payload with the incremented per-key `visit_index`). Unlike the Python SDK, mutations
+  of the state value persist without an explicit write-back — the accessor diffs and flushes
+  them itself, as in C++.
+- **The pipeline binary is its own runner.** The same `main` calling `pipeline.Run()` is both
+  the companion served inside the worker job and the launcher run on the dev host: with no Flow
+  env vars set it parses `--config`/`--flow-bin`, enriches the spec and execs `flow_server`.
+  That is why `pipeline_go.yson.template` is *smaller* than the Python variant's: no `streams`
+  block (the schemas registered with `pipeline.AddStreams` are injected into `spec/streams`),
+  no `entrypoint` in the `CompanionManager` parameters, no `local_files`, no worker
+  `port_count`. Verified against the live operation spec — the runner did all of it unaided:
+  the worker task ran with `port_count: 3` and a `go_companion` file entry pointing at the
+  uploaded pipeline binary, and the extended spec carried
+  `entrypoint = {executable = "./go_companion"}` + `run_process = %true`.
+
+Everything runs under its own Cypress root, `$YT_DEV_ROOT/key_visitor_go`;
+`companion_go/{yt_sync,prepare_data,verify}.py` are the same bootstrap/seed/assert scripts
+pointed at that root.
+
+Adaptations, stated explicitly — the asserts are unchanged:
+
+- **The Go Flow SDK is not in a tagged `go.ytsaurus.tech/yt/go` release yet** (checked at
+  v0.0.33: `module ... found, but does not contain package go.ytsaurus.tech/yt/go/flow`), so
+  `go.mod` replaces the module with a sibling source checkout of
+  `github.com/ytsaurus/ytsaurus` (clone it next to this repo, or repoint with
+  `go mod edit -replace`).
+- **`./run.sh` does not fit the Go route** — it execs `$FLOW_BIN --config <spec>`, while the Go
+  runner is the pipeline binary itself and needs `--flow-bin` on top. The template is rendered
+  with the same one-liner and the binary is launched directly (below).
+- The per-run visit count differs again (30 output rows here vs 38/27); the 1..2 `visit_index`
+  spread and every assert are the same.
+
+The visit logic is proven offline first: `companion_go/main_test.go` drives the computation
+through `flowtest.Harness` (message→state, visit→emission, unseeded-key silence, the
+v1-visit-v2-visit supersession, counter survival across payload updates) — no cluster needed.
+
+Run, from the repo root:
+
+```bash
+key_visitor/companion_go/build.sh       # go build; GO="ya tool go" if there is no system go
+(cd key_visitor/companion_go && ${GO:-go} test ./...)  # offline visit-logic tests
+
+python3 key_visitor/companion_go/yt_sync.py       # once: Cypress objects under key_visitor_go/
+python3 key_visitor/companion_go/prepare_data.py  # 20 keys as v1, then the same 20 as v2
+
+cd key_visitor
+SCENARIO_DIR="$PWD" python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline_go.yson.template > pipeline_go.yson
+./companion_go/key_visitor_go --config pipeline_go.yson \
+    --flow-bin ~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped
+                                        # execs flow_server; returns when the pipeline completes
+
+python3 companion_go/verify.py
+cd .. && ./stop.sh key_visitor_go       # aborts the vanilla operation
+```
+
+On this demo cluster (4/9 data nodes), run the erasure-codec workaround right after
+`yt_sync.py` and before deploying: set `@erasure_codec = none` and `@hunk_erasure_codec = none`
+on every table under `$YT_DEV_ROOT/key_visitor_go` (queues, consumer and all pipeline system
+tables) and remount each. Without it table writes stall hunting for erasure part replicas; with
+sync unmount some empty system tables still hang in `unmounting` and need
+`yt unmount-table --force` before remounting.
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`,
+first deploy; the runner launched at 16:14:05 and printed `Pipeline completed` at 16:15:46 —
+about 100 seconds end to end:
+
+```
+$ python3 companion_go/verify.py
+ok: pipeline reached `completed`
+ok: all 20 seeded keys were visited
+ok: the latest visit of every key carries the v2 payload
+output rows: 30; per-key max visit_index range: 1..2
+OK: the final key-visitor pass swept the post-completion state of every key
+```
