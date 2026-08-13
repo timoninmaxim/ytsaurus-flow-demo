@@ -27,16 +27,17 @@ sets on both vanilla tasks:
 
 The image is a stock public one — `flow_server` itself needs nothing from it beyond a glibc
 userland, and the job proxy is bind-mounted in by the node. To use another, change it in
-`pipeline.yson.template` and pass the same one to `build.sh` as `FLOW_DOCKER_IMAGE`.
+`pipeline.yson.template`.
 
 ### What this scenario needs that the repo README does not list
 
-- **`podman` or `docker`** on the dev host, to build the image or the SDK bundle.
+- **`podman` or `docker`** on the dev host, to build the companion image. Both routes below start
+  from it.
 - **A `flow_server` new enough to pass per-task `docker_image` into the vanilla spec.** Without it
   the field never reaches the operation, the jobs run in the default environment where
-  `/usr/local/bin/python3` does not exist, and the companion fails to start. Both this and the
-  `ytsaurus-flow-companion` sources the build reads come from an ordinary ytsaurus checkout —
-  `git clone https://github.com/ytsaurus/ytsaurus.git` — from commit `c6adf1ad176` onwards.
+  `/usr/local/bin/python3` does not exist, and the companion fails to start. It and the Dockerfile
+  come from an ordinary ytsaurus checkout — `git clone https://github.com/ytsaurus/ytsaurus.git` —
+  from commit `c6adf1ad176` onwards.
 
 ## Two ways to get the SDK into the job
 
@@ -80,17 +81,22 @@ variable unset the runner refuses to launch.
 
 ### `pipeline.yson.template` — SDK as a job file
 
-The default here, because it assumes no registry at all. `build.sh` produces `companion_sdk.tgz`
-(~10 MB) by installing the companion package **inside the job image**, so the
-native wheels (grpcio, protobuf) match the interpreter that will import them. `py_companion` — the
-entrypoint the worker spawns — unpacks it on first start, puts it on `PYTHONPATH` and execs
-`main.py`.
+The default here, because it needs no registry at all: the job runs a stock public image and the SDK
+arrives as a job file. `build.sh` produces `companion_sdk.tgz` (~9 MB) by copying `site-packages`
+straight out of the companion image, which already has everything installed — so the native wheels
+(grpcio, protobuf) match the interpreter that will import them, and the script needs no ytsaurus
+checkout of its own. `py_companion` — the entrypoint the worker spawns — unpacks it on first start,
+puts it on `PYTHONPATH` and execs `main.py`.
+
+You still build the companion image for this, but only locally; nothing is pushed anywhere. Its base
+must match the image the spec names, since the wheels inside it are built for that interpreter —
+both are `python:3.12-slim` unless you change the Dockerfile's `BASE_IMAGE`.
 
 Note it packs `site-packages`, not a virtualenv: a venv directory is not relocatable, which is the
 same reason Spark's `venv-pack` requires the interpreter to be present on every node already.
 
 Bundling the interpreter too, which is what a pipeline must do when it cannot choose its image,
-costs about ten times as much: ~116 MB against ~10 MB, uploaded on every deploy.
+costs about ten times as much: ~116 MB against ~9 MB, uploaded on every deploy.
 
 ## Run
 
@@ -102,8 +108,8 @@ python3 docker_vanilla_companion/yt_sync.py  # once: pipeline node, input_queue 
 # SDK in the image:
 FLOW_COMPANION_IMAGE=<registry>/ytflow-python-companion:<tag> ./run.sh docker_vanilla_companion image
 
-# or SDK as a job file:
-docker_vanilla_companion/build.sh            # once: companion_sdk.tgz (YTSAURUS=<checkout>)
+# or SDK as a job file, from a locally built companion image:
+FLOW_COMPANION_IMAGE=ytflow-python-companion:latest docker_vanilla_companion/build.sh
 ./run.sh docker_vanilla_companion
 ```
 
