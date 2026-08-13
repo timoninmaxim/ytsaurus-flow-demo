@@ -129,3 +129,113 @@ YT_MY_SECRET did not reach the vanilla job as expected (length 5, secure vault c
 That message never prints the value, and its vault-key list separates the two links of the chain:
 the vault carried `YT_MY_SECRET`, so delivery into the job worked and only the value was wrong. An
 empty vault list would have meant the secret never reached the job at all.
+
+## Python companion variant
+
+The same subject, one process further out: the user code is Python, hosted by the **stock**
+`flow_server`, and runs as a *companion* — a separate process the worker spawns and drives over
+gRPC. The question this variant answers is whether the secret survives that extra hop: the section
+above notes that a companion tests the chain only indirectly; this variant makes the companion's
+view direct evidence by reporting it instead of crashing on it.
+
+**Verdict: the secret reaches the companion.** The chain, in the engine's code:
+
+1. YT delivers the operation's secure vault to the job as the `YT_SECURE_VAULT` env var; at
+   startup the flow job re-exports every entry as a plain env var
+   (`yt/yt/flow/library/cpp/runner/init.cpp`, `Initialize`).
+2. The worker spawns the companion entrypoint with a **full copy of its own environment** —
+   `library/cpp/companion/companion_process_manager.cpp` creates the child with
+   `TSimpleProcess(executable, /*copyEnv*/ true)`, which snapshots the worker's `environ` and adds
+   `YT_FLOW_COMPANION_CONFIG` on top; nothing is scrubbed.
+
+So the Python process inherits both the re-exported `YT_MY_SECRET` and the raw `YT_SECURE_VAULT`
+text, and the run below confirms it empirically.
+
+The moving parts (all under this scenario dir, alongside the C++ variant):
+
+- `companion_py/main.py` — `SecretChecker`, a `RowFunction`: for every input message it writes
+  what it observed into the output queue — `secret` (the value of `YT_MY_SECRET` in the
+  companion's own environment) and `vault_carries_name` (whether the inherited `YT_SECURE_VAULT`
+  text mentions the name; a substring probe, diagnostic only). The verification then matches the
+  reported value from outside — stronger than the C++ variant's absence-of-failures, because the
+  value in the queue can only have come from the companion's environment. (It also means the demo
+  value lands in an output table; report a hash instead if your secret is real.)
+- `companion_py/build.sh` — packs `companion_bundle.tgz`: a self-contained CPython plus the
+  `ytsaurus-flow-companion` SDK wheel built from
+  `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package`, plus `main.py`.
+- `companion_py/py_companion` — the entrypoint the worker spawns; unpacks the bundle and runs the
+  companion gRPC server.
+- `pipeline_py.yson.template` — stock C++ `TQueueSource` reader (finite) feeding a
+  `TTransformCompanionComputation` that hosts the Python function; a `TSyncQueueSink` writes the
+  observations. The input is a small prepared queue rather than the C++ variant's `TRandomSource`
+  (the stock `flow_server` does not register it), and `finite = %true` makes the pipeline
+  self-complete — so the assertion here is `completed` *plus* the matched value, not "keeps
+  running". The `secret_env = ["YT_MY_SECRET"]` line in the vanilla block is unchanged: the
+  launcher→vault→job mechanics are engine surface that companion hosting does not touch.
+- `companion_py/yt_sync.py` — bootstrap under its own root `$YT_DEV_ROOT/secret_env_py`.
+
+### Run
+
+```bash
+secret_env/companion_py/build.sh          # once: the companion bundle (YTSAURUS_SRC=<checkout>)
+python3 secret_env/companion_py/yt_sync.py
+
+# Temporary, demo-cluster only: the bootstrap preset creates the pipeline system tables with
+# reed_solomon_3_3, which the currently degraded demo cluster cannot hold. Flip them to plain
+# replication before the first run:
+for t in $(yt find "$YT_DEV_ROOT/secret_env_py" --type table); do
+    [ "$(yt get "$t/@erasure_codec")" = '"none"' ] || \
+        { yt set "$t/@erasure_codec" none; yt remount-table "$t"; }
+done
+
+echo '{"key"="pos-1"};{"key"="pos-2"};{"key"="pos-3"}' | \
+    yt insert-rows "$YT_DEV_ROOT/secret_env_py/input_queue" --format yson
+
+export YT_MY_SECRET=5
+./run.sh secret_env py                    # stock flow_server; waits for completion
+```
+
+The runner drains the queue and exits on its own:
+
+```
+I	FlowClient	Waiting pipeline to complete (CurrentState: Working, Pipeline: <…>/secret_env_py/pipeline)
+I	FlowClient	Pipeline completed (Pipeline: <…>/secret_env_py/pipeline)
+```
+
+Then verify what the companion saw (`./stop.sh secret_env_py` afterwards aborts the vanilla
+operation — `completed` is final, so there is no pipeline left to stop):
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/secret_env_py/pipeline"
+completed
+
+$ yt select-rows "* from [$YT_DEV_ROOT/secret_env_py/output_queue]" --format json
+{... "key":"pos-1","secret":"5","vault_carries_name":"true" ...}
+{... "key":"pos-2","secret":"5","vault_carries_name":"true" ...}
+{... "key":"pos-3","secret":"5","vault_carries_name":"true" ...}
+```
+
+`secret = "5"` is the launcher's value read out of `os.environ` inside the Python process;
+`vault_carries_name = "true"` says the raw vault text made it in as well.
+
+### The failure paths, checked as well
+
+With `YT_MY_SECRET` unset the runner refuses to launch, exactly as in the C++ variant:
+
+```
+(NYT::TErrorException) Secret environment variable "YT_MY_SECRET" (declared in "secret_env") is not set
+```
+
+With a wrong value (`YT_MY_SECRET=wrong`) the pipeline still completes — this variant reports
+rather than asserts — and the observed column tracks the launcher verbatim, so verification fails
+on the value:
+
+```
+{... "key":"neg-1","secret":"wrong","vault_carries_name":"true" ...}
+{... "key":"neg-2","secret":"wrong","vault_carries_name":"true" ...}
+```
+
+(That second run needs a fresh pipeline node: `completed` is a final state the controller never
+leaves, so re-running the same finite pipeline means `yt remove --recursive .../secret_env_py/pipeline`,
+re-running `yt_sync.py`, and re-applying the erasure workaround; the queues and the consumer — and
+its offsets — survive, so only the newly inserted rows are read.)
