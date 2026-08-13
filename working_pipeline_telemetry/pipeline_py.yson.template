@@ -1,0 +1,110 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/working_pipeline_telemetry_py/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TSwiftOrderedSourceCompanionComputation";
+                "output_stream_ids" = ["data"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/working_pipeline_telemetry_py/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/working_pipeline_telemetry_py/consumer";
+                        };
+                    };
+                };
+                "parameters" = {
+                    "fail_key" = "1100";
+                    "fail_comment" = "TELEMETRY_DEMO_INTENTIONAL_FAIL";
+                    "fail_attempts" = 8;
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+            "processor" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "input_stream_ids" = ["data"];
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(key)"; "type" = "uint64"; "required" = %true;};
+                    {"name" = "key"; "type" = "string";};
+                ];
+                "parameters" = {
+                    "sleep_per_message_ms" = 2;
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+        };
+        "streams" = {
+            "data" = {
+                "schema" = [
+                    {"name" = "key"; "type" = "string"; "required" = %true;};
+                    {"name" = "data"; "type" = "string"; "required" = %true;};
+                ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
+                "parameters" = {
+                    "entrypoint" = {
+                        "executable" = "./py_companion";
+                    };
+                    "backoff" = {
+                        "invocation_count" = 5;
+                        "min_backoff" = 1000;
+                        "max_backoff" = 3000;
+                    };
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "parameters" = {
+                    "desired_partition_count" = 1;
+                };
+            };
+            "processor" = {
+                "parameters" = {};
+            };
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "controller" = {"count" = 1; "port_count" = 2;};
+        "worker" = {
+            "count" = 1;
+            "port_count" = 3;
+            "local_files" = {
+                "py_companion" = "${SCENARIO_DIR}/companion_py/py_companion";
+                "companion_bundle.tgz" = "${SCENARIO_DIR}/companion_py/companion_bundle.tgz";
+            };
+        };
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
