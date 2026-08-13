@@ -1,12 +1,12 @@
-# companion_python_docker
+# docker_vanilla_companion
 
 A Python computation running in a job image the pipeline chooses:
 `reader` (`TSwiftPassthroughOrderedSourceComputation` over `TQueueSource`) → `mapper`
 (`TTransformCompanionComputation`, implemented in `main.py`) → `TSyncQueueSink`.
 
-ytsaurus carries the same idea as a spec-only example under
-`yt/yt/flow/examples/python/docker_vanilla_companion`. This one adds the parts that example cannot:
-the Cypress bootstrap, a second route that needs no registry, and output from a real cluster.
+It shares its name with the spec-only example of the same shape that ytsaurus ships at
+`yt/yt/flow/examples/python/docker_vanilla_companion`, and adds what that one cannot carry: the
+Cypress bootstrap, a second route that needs no registry, and output from a real cluster.
 
 The mapper mirrors every typed input column to the output stream (string, int64, double, boolean —
 the companion wire-protocol type roundtrip) and adds `text_upper`, computed in Python.
@@ -97,14 +97,14 @@ costs about ten times as much: ~116 MB against ~11 MB, uploaded on every deploy.
 From the repo root:
 
 ```bash
-python3 companion_python_docker/yt_sync.py  # once: pipeline node, input_queue + consumer, output_queue
+python3 docker_vanilla_companion/yt_sync.py  # once: pipeline node, input_queue + consumer, output_queue
 
 # SDK in the image:
-FLOW_COMPANION_IMAGE=<registry>/ytflow-python-companion:<tag> ./run.sh companion_python_docker image
+FLOW_COMPANION_IMAGE=<registry>/ytflow-python-companion:<tag> ./run.sh docker_vanilla_companion image
 
 # or SDK as a job file:
-companion_python_docker/build.sh            # once: companion_sdk.tgz (YTSAURUS=<checkout>)
-./run.sh companion_python_docker
+docker_vanilla_companion/build.sh            # once: companion_sdk.tgz (YTSAURUS=<checkout>)
+./run.sh docker_vanilla_companion
 ```
 
 From a second terminal, feed the input queue and read the output:
@@ -112,13 +112,13 @@ From a second terminal, feed the input queue and read the output:
 ```bash
 echo '{"key": "a", "text": "hello", "count": 1, "score": 1.5, "flag": true}
 {"key": "b", "text": "world", "count": 2, "score": 2.5, "flag": false}' \
-    | yt insert-rows --format json "$YT_DEV_ROOT/companion_python_docker/input_queue"
+    | yt insert-rows --format json "$YT_DEV_ROOT/docker_vanilla_companion/input_queue"
 
-yt pull-queue "$YT_DEV_ROOT/companion_python_docker/output_queue" \
+yt pull-queue "$YT_DEV_ROOT/docker_vanilla_companion/output_queue" \
     --offset 0 --partition-index 0 --format json
 ```
 
-When done, `./stop.sh companion_python_docker` stops the pipeline and aborts the vanilla operation.
+When done, `./stop.sh docker_vanilla_companion` stops the pipeline and aborts the vanilla operation.
 
 ## Observed output
 

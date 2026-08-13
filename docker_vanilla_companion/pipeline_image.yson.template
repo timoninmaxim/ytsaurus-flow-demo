@@ -8,7 +8,7 @@
         };
     };
     "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
-    "path" = "${YT_DEV_ROOT}/companion_python_docker/pipeline";
+    "path" = "${YT_DEV_ROOT}/docker_vanilla_companion/pipeline";
     "spec" = {
         "computations" = {
             "reader" = {
@@ -19,8 +19,8 @@
                     "queue" = {
                         "source_class_name" = "NYT::NFlow::TQueueSource";
                         "parameters" = {
-                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/companion_python_docker/input_queue";
-                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/companion_python_docker/consumer";
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/docker_vanilla_companion/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/docker_vanilla_companion/consumer";
                             "finite" = %false;
                         };
                     };
@@ -45,7 +45,7 @@
                         "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
                         "input_stream_ids" = ["mapped"];
                         "parameters" = {
-                            "queue_path" = "${YT_DEV_ROOT}/companion_python_docker/output_queue";
+                            "queue_path" = "${YT_DEV_ROOT}/docker_vanilla_companion/output_queue";
                         };
                     };
                 };
@@ -78,7 +78,8 @@
                 "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
                 "parameters" = {
                     "entrypoint" = {
-                        "executable" = "./py_companion";
+                        "executable" = "/usr/local/bin/python3";
+                        "args" = ["main.py"];
                     };
                 };
                 "dependencies" = {};
@@ -97,14 +98,13 @@
     "vanilla" = {
         "enable" = %true;
         "pool" = "${YT_POOL}";
-        "controller" = {"count" = 1; "port_count" = 2; "docker_image" = "docker.io/library/python:3.12-slim";};
+        "secret_env" = ["docker_auth"];
+        "controller" = {"count" = 1; "port_count" = 2; "docker_image" = "${FLOW_COMPANION_IMAGE}";};
         "worker" = {
             "count" = 1;
             "port_count" = 3;
-            "docker_image" = "docker.io/library/python:3.12-slim";
+            "docker_image" = "${FLOW_COMPANION_IMAGE}";
             "local_files" = {
-                "py_companion" = "${SCENARIO_DIR}/py_companion";
-                "companion_sdk.tgz" = "${SCENARIO_DIR}/companion_sdk.tgz";
                 "main.py" = "${SCENARIO_DIR}/main.py";
             };
         };

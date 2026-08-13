@@ -1,4 +1,4 @@
-# Creates the Cypress objects for the companion_python_docker scenario: the pipeline
+# Creates the Cypress objects for the docker_vanilla_companion scenario: the pipeline
 # node, the input queue with its consumer, and the output queue.
 #
 # Run after sourcing your env file (see the repo README):
@@ -27,7 +27,7 @@ INPUT_SCHEMA = ROW_COLUMNS + SYSTEM_COLUMNS
 OUTPUT_SCHEMA = ROW_COLUMNS + [{"name": "text_upper", "type": "string"}] + SYSTEM_COLUMNS
 
 CLUSTER = os.environ["YT_PROXY"]
-FOLDER = os.environ["YT_DEV_ROOT"] + "/companion_python_docker"
+FOLDER = os.environ["YT_DEV_ROOT"] + "/docker_vanilla_companion"
 
 
 def main():
@@ -73,7 +73,7 @@ def main():
     }
 
     run_yt_sync_easy_mode(
-        "companion_python_docker",
+        "docker_vanilla_companion",
         StagesSpec(stages=stages, pipelines=pipelines, tables=tables, consumers=consumers),
         args=["--stage", "demo", "--scenario", "ensure", "--parallel-factor", "0", "--commit"],
     )

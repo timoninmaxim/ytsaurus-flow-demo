@@ -1,4 +1,4 @@
-"""Python companion for the companion_python_docker scenario.
+"""Python companion for the docker_vanilla_companion scenario.
 
 The "mapper" computation mirrors every typed input column to the output stream
 (string, int64, double, boolean -- the companion wire-protocol type roundtrip)
