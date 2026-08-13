@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 env.sh
 pipeline.yson
+pipeline_*.yson
 *.stripped
 .cache/
+identities.json
