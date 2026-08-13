@@ -78,7 +78,8 @@
                 "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
                 "parameters" = {
                     "entrypoint" = {
-                        "executable" = "./py_companion";
+                        "executable" = "/usr/local/bin/python3";
+                        "args" = ["main.py"];
                     };
                 };
                 "dependencies" = {};
@@ -97,14 +98,13 @@
     "vanilla" = {
         "enable" = %true;
         "pool" = "${YT_POOL}";
-        "controller" = {"count" = 1; "port_count" = 2; "docker_image" = "docker.io/library/python:3.12-slim";};
+        "secret_env" = ["docker_auth"];
+        "controller" = {"count" = 1; "port_count" = 2; "docker_image" = "${FLOW_COMPANION_IMAGE}";};
         "worker" = {
             "count" = 1;
             "port_count" = 3;
-            "docker_image" = "docker.io/library/python:3.12-slim";
+            "docker_image" = "${FLOW_COMPANION_IMAGE}";
             "local_files" = {
-                "py_companion" = "${SCENARIO_DIR}/py_companion";
-                "companion_sdk.tgz" = "${SCENARIO_DIR}/companion_sdk.tgz";
                 "main.py" = "${SCENARIO_DIR}/main.py";
             };
         };

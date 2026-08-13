@@ -6,5 +6,3 @@ pipeline.yson
 pipeline_*.yson
 *.stripped
 .cache/
-sdk/
-companion_sdk.tgz
