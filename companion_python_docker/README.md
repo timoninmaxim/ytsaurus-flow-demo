@@ -4,6 +4,10 @@ A Python computation running in a job image the pipeline chooses:
 `reader` (`TSwiftPassthroughOrderedSourceComputation` over `TQueueSource`) → `mapper`
 (`TTransformCompanionComputation`, implemented in `main.py`) → `TSyncQueueSink`.
 
+ytsaurus carries the same idea as a spec-only example under
+`yt/yt/flow/examples/python/docker_vanilla_companion`. This one adds the parts that example cannot:
+the Cypress bootstrap, a second route that needs no registry, and output from a real cluster.
+
 The mapper mirrors every typed input column to the output stream (string, int64, double, boolean —
 the companion wire-protocol type roundtrip) and adds `text_upper`, computed in Python.
 
@@ -27,13 +31,12 @@ userland, and the job proxy is bind-mounted in by the node. To use another, chan
 
 ### What this scenario needs that the repo README does not list
 
-- **A `flow_server` that passes per-task `docker_image` into the vanilla spec.** Not in ytsaurus
-  yet. Without it the field never reaches the operation, the jobs run in the default environment
-  where `/usr/local/bin/python3` does not exist, and the companion fails to start.
-- **The `ytsaurus-flow-companion` package sources** at
-  `<ytsaurus>/yt/yt/flow/tools/python_companion_package`, which both routes below build from. Also
-  not in ytsaurus yet.
 - **`podman` or `docker`** on the dev host, to build the image or the SDK bundle.
+- **A `flow_server` new enough to pass per-task `docker_image` into the vanilla spec.** Without it
+  the field never reaches the operation, the jobs run in the default environment where
+  `/usr/local/bin/python3` does not exist, and the companion fails to start. Both this and the
+  `ytsaurus-flow-companion` sources the build reads come from an ordinary ytsaurus checkout —
+  `git clone https://github.com/ytsaurus/ytsaurus.git` — from commit `c6adf1ad176` onwards.
 
 ## Two ways to get the SDK into the job
 
@@ -120,7 +123,7 @@ When done, `./stop.sh companion_python_docker` stops the pipeline and aborts the
 ## Observed output
 
 ```
-flow_server: 26.2.0-local-os~5c69dd1804e43fe5
+flow_server: 26.2.0-local-os~1bdcb82f3ab63fcb
 ```
 
 Every column comes back unchanged plus `text_upper`, so the row went through the Python process
