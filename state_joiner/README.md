@@ -317,3 +317,109 @@ graph, same stream names, same four users, same assertion.
   unexamined: `batch_duration = 100` (ms) on all three computations instead of the 1 s default, so
   the pipeline finishes quickly, and `job_tracker/job_threads = 4` instead of the default 30,
   because five jobs on one worker need no more. Raise both for anything with real throughput.
+
+## Python companion variant
+
+`companion_py/` re-runs the scenario with the accumulator and the joiner written in **Python**,
+hosted by the stock `flow_server` through the same `TTransformCompanionComputation` host class;
+the reader stays the stock C++ source computation, exactly as in the C++ variant. The topology,
+the external-state restructuring and the assertion are unchanged: `companion_py/main.py`
+registers both functions, `pipeline_py.yson.template` is the same graph under its own root
+`$YT_DEV_ROOT/state_joiner_py`, and the companion delivery is the launcher + bundle pair from
+`word_count_sync/companion_py` (`entrypoint = ./py_companion`, two `local_files`, worker
+`port_count = 3`).
+
+What this variant demonstrates on top of the C++ one: **`external_state_joiners` is fully usable
+from Python.** The worker-side host ships the joined states with each batch, and the SDK surfaces
+them as `ctx.joined_external_state("/user_total", message)` — a read-only accessor with the same
+`Payload` reads as `ctx.external_state`; `set()`/`clear()` on it raise
+`ReadOnlyExternalStateError`, which is the SDK making "joiners never write back" explicit rather
+than a missing feature. The joiner is a `BatchFunction` — the Python counterpart of the
+`IBatchProcessFunction` granularity the upstream test uses — and receives the request's whole
+message batch, which is fine here because the join key is the message's own key (`join_on = {}`)
+and no grouping is needed.
+
+Everything in "What this scenario found" above applies unchanged, because the limits live in the
+worker-side host and the wire contract, not in the user's language: `state_joiners` is unavailable
+to Python exactly as to C++ companions (the same `Internal state joiners are not available in a
+companion process` retry-forever failure), and `key_schema_override` under an external state
+joiner would hit the same worker-killing `GetOrCrash` before any Python code runs. This spec
+therefore joins on the same key, like the C++ one.
+
+Deliberate differences against the C++ companion:
+
+- **`processing_function` is omitted.** The Python SDK dispatches by `computation_id`
+  (`pipeline.add("accumulator", …)` / `pipeline.add("joiner", …)`), so the spec does not name the
+  functions.
+- **External state is written back explicitly**: only `state.set(...)` persists — the accumulator
+  reads `state.get("Total")`, builds the incremented payload and `set`s it.
+- **The missing-join sentinel handles one case, not two.** The C++ joiner distinguishes an
+  uninitialized accessor from an all-null row; in Python the un-shipped-state case surfaces as a
+  `ValueError` from `ctx.joined_external_state`, and the reachable miss — no row in `user_totals`,
+  shipped as an all-null payload — is the same `get() is None`, reported as `Total = -1` for the
+  same reason (an exception in a companion is retried forever). No `-1` appears in the run below.
+
+`build.sh` follows `word_count_sync/companion_py/build.sh`: it reuses the already-built
+`ytsaurus-flow-companion` wheel from `companion_python/build/wheels/` when present and otherwise
+builds it from `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package` (not on PyPI yet).
+
+Run, from the repo root:
+
+```bash
+state_joiner/companion_py/build.sh          # companion_bundle.tgz: CPython + SDK + main.py
+python3 state_joiner/companion_py/yt_sync.py    # once: objects under state_joiner_py/
+
+python3 -c 'import json, sys
+for i, amount in enumerate([10, 20, 30, 40]):
+    sys.stdout.write(json.dumps({"UserId": "user-%d" % i, "Amount": amount, "$$tablet_index": 0}) + "\n")' \
+  | yt insert-rows --format json "$YT_DEV_ROOT/state_joiner_py/input_queue"
+
+FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
+    ./run.sh state_joiner py                # stock binary; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_py/pipeline"
+yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_py/output_table]" --format json
+yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_py/user_totals]" --format json
+./stop.sh state_joiner_py                   # aborts the vanilla operation
+```
+
+Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`:
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_py/pipeline"
+completed
+
+$ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_py/output_table]" --format json
+{"UserId":"user-2","Total":30}
+{"UserId":"user-0","Total":10}
+{"UserId":"user-1","Total":20}
+{"UserId":"user-3","Total":40}
+
+$ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_py/user_totals]" --format json
+{"UserId":"user-2","Total":30}
+{"UserId":"user-0","Total":10}
+{"UserId":"user-1","Total":20}
+{"UserId":"user-3","Total":40}
+```
+
+Identical to the C++ variant's output: `(UserId, Total)` sorted is the input amounts, the two
+tables agree, no row is `-1`, and the pipeline's own `states` table is empty. All five jobs
+completed within ~30 s of the pipeline going `working`; the whole run — deploy to `completed` —
+took about three minutes with both binaries already in the cluster's file cache.
+
+### A sharp edge met on the way: erasure-coded pipeline tables on a small cluster
+
+The pipeline system tables (`flow_state`, `states`, …) are created by the yt_sync_mini pipeline
+preset with `erasure_codec = reed_solomon_3_3`, which needs **six** online data nodes per chunk
+write. On a cluster with fewer (the demo cluster had four of its nine data nodes online during
+this run), every tablet flush of those tables fails with `Not enough data nodes available to
+write chunk` — silently: the data sits in tablet dynamic memory and retries forever, until the
+tablet node hits its memory limit and refuses **all** writes (`Node is out of tablet memory, all
+writes disabled`, from `insert-rows` into any table of that node). The fix that unblocked this
+run: `yt set <table>/@erasure_codec none` plus `yt remount-table <table>` on the pipeline tables
+(the remount matters — the mounted tablet keeps writing with the codec it was mounted with), and
+the accumulated memory drains as the flushes start succeeding. A tablet already stuck in a
+`transient` state keeps its old codec snapshot and can only be recovered with
+`yt unmount-table --force` (which discards the unflushed rows) followed by `yt mount-table`.
+Queue and data tables created by the scenarios' own yt_sync scripts use `erasure_codec = none`
+and are not affected.
