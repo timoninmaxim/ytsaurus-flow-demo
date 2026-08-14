@@ -99,10 +99,9 @@
         "enable" = %true;
         "pool" = "${YT_POOL}";
         "secret_env" = ["docker_auth"];
-        "controller" = {"count" = 1; "port_count" = 2; "docker_image" = "${FLOW_COMPANION_IMAGE}";};
+        "controller" = {"count" = 1; "docker_image" = "${FLOW_COMPANION_IMAGE}";};
         "worker" = {
             "count" = 1;
-            "port_count" = 3;
             "docker_image" = "${FLOW_COMPANION_IMAGE}";
             "local_files" = {
                 "main.py" = "${SCENARIO_DIR}/main.py";
