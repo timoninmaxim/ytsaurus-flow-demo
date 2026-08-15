@@ -167,8 +167,8 @@ In the run below no `-1` appears, which is itself part of the assertion.
 
 ## Run
 
-`word_count_sync`'s README is the companion reference — spec wiring, binary delivery,
-`port_count = 3` and the version bar all apply here unchanged; `computation_cycles_and_buffers`
+`word_count_sync`'s README is the companion reference — spec wiring, binary delivery and the
+version bar all apply here unchanged; `computation_cycles_and_buffers`
 adds the multi-computation notes. This scenario adds three facts:
 
 - `IBatchProcessFunction` (the whole-epoch granularity, used by the joiner) is hosted by the
