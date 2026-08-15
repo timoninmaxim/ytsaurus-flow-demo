@@ -134,10 +134,9 @@
     "vanilla" = {
         "enable" = %true;
         "pool" = "${YT_POOL}";
-        "controller" = {"count" = 1; "port_count" = 2;};
+        "controller" = {"count" = 1;};
         "worker" = {
             "count" = 1;
-            "port_count" = 3;
             "local_files" = {
                 "word_count_sync_companion" = "${SCENARIO_DIR}/word_count_sync_companion.stripped";
             };
