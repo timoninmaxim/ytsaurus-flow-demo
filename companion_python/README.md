@@ -24,7 +24,7 @@ does the same thing in two explicit pieces:
 
 - `build.sh` packages `companion_bundle.tgz` on the dev host: a self-contained CPython runtime
   (the job image's python3.8 is too old for the SDK), the **`ytsaurus-flow-companion`** package —
-  built as a wheel from `yt/yt/flow/tools/companion` in the checkout, it carries the SDK, the
+  built as a wheel from `yt/yt/flow/tools/python_companion_package` in the checkout, it carries the SDK, the
   generated companion-protocol proto stubs, and the pinned gRPC/protobuf toolchain — with its
   dependencies resolved for the bundled runtime, and `main.py`.
 - `pipeline.yson.template` states what the Arcadia runner would have patched in: the two

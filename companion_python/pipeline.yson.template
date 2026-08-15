@@ -97,10 +97,9 @@
     "vanilla" = {
         "enable" = %true;
         "pool" = "${YT_POOL}";
-        "controller" = {"count" = 1; "port_count" = 2;};
+        "controller" = {"count" = 1;};
         "worker" = {
             "count" = 1;
-            "port_count" = 3;
             "local_files" = {
                 "py_companion" = "${SCENARIO_DIR}/py_companion";
                 "companion_bundle.tgz" = "${SCENARIO_DIR}/companion_bundle.tgz";

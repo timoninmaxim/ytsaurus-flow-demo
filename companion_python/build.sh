@@ -25,10 +25,10 @@ RUNTIME_TAR="$CACHE_DIR/$(basename "$PYTHON_RUNTIME_URL")"
 tar xzf "$RUNTIME_TAR" -C build/bundle  # Extracts into build/bundle/python/.
 
 # The companion SDK, its generated proto stubs, and the pinned toolchain all come from the
-# ytsaurus-flow-companion package (yt/yt/flow/tools/companion in the checkout). Build its wheel
+# ytsaurus-flow-companion package (yt/yt/flow/tools/python_companion_package in the checkout). Build its wheel
 # first: `pip install <src dir>` cannot be combined with the cross-platform flags below, and the
 # wheel is pure python, so it installs for the bundled runtime regardless of the host python.
-pip3 wheel --quiet --no-deps -w build/wheels "$YTSAURUS_SRC/yt/yt/flow/tools/companion"
+pip3 wheel --quiet --no-deps -w build/wheels "$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package"
 pip3 install --quiet --target build/bundle \
     --platform manylinux2014_x86_64 --implementation cp \
     --python-version "$BUNDLE_PYTHON_VERSION" --only-binary=:all: \
