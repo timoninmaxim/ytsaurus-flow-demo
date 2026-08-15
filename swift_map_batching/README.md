@@ -35,7 +35,7 @@ server (`companion/main.cpp`), not in a pipeline binary of its own: the merge is
 out-of-process because the companion wire contract carries an output *group* with several parent
 ids (`TOutputGroup::ParentIds`), which `TSwiftMapCompanionComputation::DoProcess` replays into
 `output->SetParents(groupParents, …)` on the worker side. `word_count_sync` and
-`computation_cycles_and_buffers` cover the companion mechanics — spec wiring, `port_count = 3`,
+`computation_cycles_and_buffers` cover the companion mechanics — spec wiring,
 binary delivery, the version bar; read those first.
 
 One companion-specific detail this scenario adds: the merge needs the *whole key group* as
