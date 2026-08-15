@@ -107,10 +107,9 @@
     "vanilla" = {
         "enable" = %true;
         "pool" = "${YT_POOL}";
-        "controller" = {"count" = 1; "port_count" = 2;};
+        "controller" = {"count" = 1;};
         "worker" = {
             "count" = 1;
-            "port_count" = 3;
             "local_files" = {
                 "swift_map_batching_companion" = "${SCENARIO_DIR}/swift_map_batching_companion.stripped";
             };
