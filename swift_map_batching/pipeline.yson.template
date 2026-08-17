@@ -1,0 +1,122 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/swift_map_batching/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "input_stream_ids" = [];
+                "output_stream_ids" = ["event_in"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/swift_map_batching/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/swift_map_batching/consumer";
+                            "finite" = %false;
+                        };
+                    };
+                };
+            };
+            "batcher" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TSwiftMapCompanionComputation";
+                "processing_function" = "NYT::NFlow::NDemo::TBatchFunction";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(group_key)"; "type" = "uint64"; required = %true;};
+                    {"name" = "group_key"; "type" = "uint64";};
+                ];
+                "input_stream_ids" = ["event_in"];
+                "output_stream_ids" = ["event_batched"];
+                "parameters" = {
+                    "allow_batching_with_relaxed_guarantees" = ${ALLOW_BATCHING};
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+            "writer" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "processing_function" = "NYT::NFlow::NDemo::TWriteFunction";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "0u"; "type" = "uint64"; required = %true;};
+                ];
+                "input_stream_ids" = ["event_batched"];
+                "output_stream_ids" = ["sink_event"];
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["sink_event"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/swift_map_batching/output_queue";
+                        };
+                    };
+                };
+                "parameters" = {
+                    "processing_mode" = "exactly_once";
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {"worker" = %true; "controller" = %false;};
+                };
+            };
+        };
+        "streams" = {
+            "event_in" = {
+                "schema" = [
+                    {"name" = "event_id"; "type" = "int64";};
+                    {"name" = "group_key"; "type" = "uint64";};
+                ];
+            };
+            "event_batched" = {
+                "schema" = [
+                    {"name" = "event_ids"; "type" = "string";};
+                ];
+            };
+            "sink_event" = {
+                "schema" = [
+                    {"name" = "event_id"; "type" = "int64";};
+                    {"name" = "batch_size"; "type" = "int64";};
+                ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
+                "parameters" = {
+                    "entrypoint" = {
+                        "executable" = "./swift_map_batching_companion";
+                    };
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "batcher" = {"parameters" = {"desired_partition_count" = 5;};};
+            "writer" = {"parameters" = {"desired_partition_count" = 1;};};
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "controller" = {"count" = 1;};
+        "worker" = {
+            "count" = 1;
+            "local_files" = {
+                "swift_map_batching_companion" = "${SCENARIO_DIR}/swift_map_batching_companion.stripped";
+            };
+        };
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
