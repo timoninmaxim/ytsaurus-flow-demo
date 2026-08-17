@@ -4,4 +4,6 @@ __pycache__/
 env.sh
 pipeline.yson
 *.stripped
+build/
+companion_bundle.tgz
 .cache/
