@@ -1,12 +1,8 @@
 # docker_vanilla_companion
 
-A Python computation running in a job image the pipeline chooses:
+A Python computation running in a job image. The pipeline:
 `reader` (`TSwiftPassthroughOrderedSourceComputation` over `TQueueSource`) → `mapper`
 (`TTransformCompanionComputation`, implemented in `main.py`) → `TSyncQueueSink`.
-
-It shares its name with the spec-only example of the same shape that ytsaurus ships at
-`yt/yt/flow/examples/python/docker_vanilla_companion`, and adds what that one cannot carry: the
-Cypress bootstrap and output from a real cluster.
 
 The mapper mirrors every typed input column to the output stream (string, int64, double, boolean —
 the companion wire-protocol type roundtrip) and adds `text_upper`, computed in Python.
@@ -32,7 +28,7 @@ user's code:
 "entrypoint" = {"executable" = "/usr/local/bin/python3"; "args" = ["main.py"];};
 ```
 
-### What this scenario needs that the repo README does not list
+### What this scenario needs
 
 - **`podman` or `docker`** on the dev host, and a registry your cluster can pull from.
 
@@ -48,11 +44,6 @@ docker build -f yt/yt/flow/tools/python_companion_package/Dockerfile \
     -t <registry>/ytflow-python-companion:<tag> .
 docker push <registry>/ytflow-python-companion:<tag>
 ```
-
-This example needs nothing beyond the SDK, so it uses that image as it is and ships `main.py` as a
-job file. A computation that imports third-party packages inherits from it —
-`FROM <registry>/ytflow-python-companion:<tag>` — adds what it needs, and drops the `local_files`
-entry.
 
 The spec assumes a **private** registry, which is what you get by default when you push to one:
 `"secret_env" = ["docker_auth"]` in its vanilla block asks the runner to forward an environment
@@ -123,15 +114,4 @@ yt get-operation <op-id> --attribute spec --format json | python3 -c '
 import json, sys
 spec = json.load(sys.stdin)["spec"]
 print({name: task.get("docker_image") for name, task in spec["tasks"].items()})'
-```
-
-### The failure path, checked as well
-
-Pointing the spec at an image that does not exist fails both tasks in job preparation, which is what
-makes the successful run evidence that the field is honored rather than quietly dropped:
-
-```
-Job preparation failed
-  Failed to pull docker image
-    code    1132
 ```
