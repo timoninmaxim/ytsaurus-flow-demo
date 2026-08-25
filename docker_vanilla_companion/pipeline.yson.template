@@ -1,0 +1,115 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/docker_vanilla_companion/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "input_stream_ids" = [];
+                "output_stream_ids" = ["rows"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/docker_vanilla_companion/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/docker_vanilla_companion/consumer";
+                            "finite" = %false;
+                        };
+                    };
+                };
+            };
+            "mapper" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(key)"; "type" = "uint64"; required = %true;};
+                    {"name" = "key"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["rows"];
+                "output_stream_ids" = ["mapped"];
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["mapped"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/docker_vanilla_companion/output_queue";
+                        };
+                    };
+                };
+                "parameters" = {};
+            };
+        };
+        "streams" = {
+            "rows" = {
+                "schema" = [
+                    {"name" = "key"; "type" = "string";};
+                    {"name" = "text"; "type" = "string";};
+                    {"name" = "count"; "type" = "int64";};
+                    {"name" = "score"; "type" = "double";};
+                    {"name" = "flag"; "type" = "boolean";};
+                ];
+            };
+            "mapped" = {
+                "schema" = [
+                    {"name" = "key"; "type" = "string";};
+                    {"name" = "text"; "type" = "string";};
+                    {"name" = "count"; "type" = "int64";};
+                    {"name" = "score"; "type" = "double";};
+                    {"name" = "flag"; "type" = "boolean";};
+                    {"name" = "text_upper"; "type" = "string";};
+                ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TCompanionManager";
+                "parameters" = {
+                    "entrypoint" = {
+                        "executable" = "/usr/local/bin/python3";
+                        "args" = ["main.py"];
+                    };
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {};
+            "mapper" = {};
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "secret_env" = ["docker_auth"];
+        "controller" = {"count" = 1; "docker_image" = "${FLOW_COMPANION_IMAGE}";};
+        "worker" = {
+            "count" = 1;
+            "docker_image" = "${FLOW_COMPANION_IMAGE}";
+            "local_files" = {
+                "main.py" = "${SCENARIO_DIR}/main.py";
+            };
+        };
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
