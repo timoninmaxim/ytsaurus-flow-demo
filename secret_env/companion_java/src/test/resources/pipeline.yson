@@ -1,0 +1,37 @@
+{
+    spec = {
+        computations = {
+            "checker" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(key)"; type = "uint64"; required = %true};
+                    {name = "key"; type = "string"; required = %true};
+                ];
+                input_stream_ids = ["events"];
+                output_stream_ids = ["observations"];
+                parameters = {};
+            };
+        };
+        streams = {
+            "events" = {
+                schema = [
+                    {name = "key"; type = "string"; required = %true};
+                ];
+            };
+            "observations" = {
+                schema = [
+                    {name = "key"; type = "string"; required = %true};
+                    {name = "secret"; type = "string"; required = %true};
+                    {name = "vault_carries_name"; type = "string"; required = %true};
+                ];
+            };
+        };
+    };
+    dynamic_spec = {
+        computations = {
+            "checker" = {
+                parameters = {};
+            };
+        };
+    };
+}
