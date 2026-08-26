@@ -1,0 +1,128 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "abort_on_specs_parseability_error" = %false;
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/word_count_sync_java/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TSwiftOrderedSourceCompanionComputation";
+                "output_stream_ids" = ["words"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/word_count_sync_java/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/word_count_sync_java/consumer";
+                            "finite" = %true;
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+            "counter" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(word)"; "type" = "uint64"; required = %true;};
+                    {"name" = "word"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["words"];
+                "output_stream_ids" = ["skipped"];
+                "parameters" = {
+                    "min_word_length" = 4;
+                    "stop_words" = ["flow"; "to"];
+                };
+                "external_state_managers" = {
+                    "/state" = {
+                        "external_state_manager_class_name" = "NYT::NFlow::TSimpleExternalStateManager";
+                        "parameters" = {
+                            "path" = "${YT_DEV_ROOT}/word_count_sync_java/word_counts";
+                        };
+                    };
+                };
+                "sinks" = {
+                    "skipped_words" = {
+                        "sink_class_name" = "NYT::NFlow::NSortedDynamicTable::TSyncSink";
+                        "input_stream_ids" = ["skipped"];
+                        "parameters" = {
+                            "table_path" = "${YT_DEV_ROOT}/word_count_sync_java/skipped_words";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+        };
+        "streams" = {
+            "words" = {
+                "schema" = [
+                    {"name" = "word"; "type" = "string";};
+                ];
+            };
+            "skipped" = {
+                "schema" = [
+                    {"name" = "word"; "type" = "string";};
+                    {"name" = "length"; "type" = "int64";};
+                ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
+                "parameters" = {
+                    "main_class" = "tech.ytsaurus.flow.demo.wordcountsync.WordCountSyncMain";
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 1;
+                };
+            };
+            "counter" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 5;
+                };
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "controller" = {"count" = 1;};
+        "worker" = {
+            "count" = 1;
+            "port_count" = 3;
+            "docker_image" = "docker.io/library/eclipse-temurin:17-jre";
+        };
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}

@@ -5,3 +5,8 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+pipeline_java.yson
+.gradle/
+word_count_sync/companion_java/build/
+word_count_sync/logs/
+word_count_sync/companion_java/logs/

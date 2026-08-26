@@ -360,3 +360,102 @@ Timings: runner launched 14:09:29 UTC → pipeline `working` 14:09:44 → `compl
 `unrecognized fields` parseability line described above and **no** companion
 `Connection refused` at all — the 18 MB Go binary binds its port instantly, with no bundle to
 unpack.
+
+## Java companion variant
+
+`companion_java/` re-runs the scenario with the reader and the counter written in **Java**
+(`tech.ytsaurus:flow-*`, the Flow Java SDK), hosted by the same stock `flow_server` through the
+same two companion host classes — including the swift source: `TSwiftOrderedSourceCompanionComputation`
+drives a `SourceComputation` registered in `WordCountSyncMain` exactly as it drives the C++, Python
+and Go readers. `key_visitor`'s Java variant kept its reader native, so this is the first of the
+Java ports to put a Java function on the source path. The topology — the external state `/state`
+behind the `word_counts` table and the skipped-words stream written by the sync sink inside the
+same epoch transaction — and the choreography are unchanged; everything runs under its own root
+`$YT_DEV_ROOT/word_count_sync_java`.
+
+The plumbing is `key_visitor/companion_java`'s, unchanged: one entry point for the runner and the
+companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the composite Gradle build
+substituting the unpublished SDK with a sibling ytsaurus checkout, the `collectRuntime` jar
+directory the runner ships from `java.library.path`, `TJavaCompanionManager` with only
+`main_class` set, `port_count = 3`, and — this cluster having no porto layers — the
+`eclipse-temurin:17-jre` docker image plus the `YT_FLOW_JDK_LAYERS='[]'` /
+`YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` overrides in `run.sh`.
+
+Adaptations against the C++ variant, stated explicitly — the asserts are unchanged:
+
+- **The stop words travel in the spec's `parameters`, as in the Python and Go variants.** The
+  Java SDK registers computations only; there is no counterpart of the C++
+  `TPipeline::AddResource`, so `computations/counter/parameters` carries both `min_word_length`
+  and `stop_words`, read via `ctx.getComputationParameters()`. The runner logs the same single
+  startup `E SimpleRunner … Static spec has unrecognized fields` naming exactly these two fields;
+  as in the Go variant it is logged unconditionally and refuses nothing.
+- **External state is `Payload`-shaped.** `StateDescriptors.external("/state")` returns an
+  accessor over raw schema-carrying rows, not over a typed POJO like the internal-state
+  `StateDescriptors.yson(...)` that `key_visitor` uses. `getOrDefault()` hands back the stored
+  row, or an all-null row of the state schema when the key is absent — which folds the two live
+  "no count yet" shapes (absent row, and present row with `count` null) into one per-column null
+  check: `row.get("count", Long.class) == null`, the direct translation of the C++
+  `optional<i64>.value_or(0)`.
+- **Only `set` persists the state.** As in Python and Go, the counter writes back a fresh
+  `PayloadBuilder(row.getSchema())` row with only `count` set; the state manager fills the key
+  columns from the grouping key.
+
+The word logic is proven offline first: `WordCountSyncTest` drives both computations through the
+SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the pipeline spec —
+split order, stop-word filtering, skipped-words emission, counting over seeded external state,
+the null-`count` row shape, a repeated key read-modify-written twice inside one batch, and an
+end-to-end pipe of the scenario's two lines asserting exactly the two tables — no cluster needed.
+
+Run, from the repo root:
+
+```bash
+word_count_sync/companion_java/build.sh      # gradle test + collectRuntime (JDK 17+)
+python3 word_count_sync/companion_java/yt_sync.py   # once: objects under word_count_sync_java/
+
+printf '%s\n' '{"text": "hello to a world", "$$tablet_index": 0}' \
+              '{"text": "flow is on it", "$$tablet_index": 0}' \
+    | yt insert-rows --format json "$YT_DEV_ROOT/word_count_sync_java/input_queue"
+
+word_count_sync/companion_java/run.sh        # deploys; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_java/pipeline"
+yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_java/word_counts]" --format json
+yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_java/skipped_words]" --format json
+./stop.sh word_count_sync_java               # aborts the vanilla operation
+```
+
+On this demo cluster, run the erasure-codec workaround described for the Go variant right after
+`yt_sync.py` — here it is needed only for the pipeline system tables (the user tables already
+come out with `erasure_codec = none`), and the same empty-table `unmounting` hang applies: use a
+plain async `yt unmount-table` and `--force` the tablets still `transient` after ~20 s.
+
+Recorded from the live run on the demo cluster, `flow_server` and the SDK built from ytsaurus
+flow-core commit `baaaeedbe3c` (heads/main):
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_java/pipeline"
+completed
+
+$ yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_java/word_counts]" --format json
+{"word":"hello","count":1}
+{"word":"world","count":1}
+
+$ yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_java/skipped_words]" --format json
+{"word":"a","length":1}
+{"word":"is","length":2}
+{"word":"it","length":2}
+{"word":"on","length":2}
+```
+
+Identical to the C++, Python and Go variants' output, and the two tables again prove the stop
+words were applied from the spec parameters. Timings: runner launched → `completed` in 82 s,
+with the usual one round of companion `Connection refused` while the JVM boots (~15 lines here —
+between the Go binary's zero and the Python bundle's minute).
+
+A second run re-created the scenario and fed **2000 lines / 16000 words** (a seeded random draw
+over eight countable words, seven short ones and the two stop words, inserted in four
+500-row batches) to exercise the state read-modify-write at depth instead of the two-line feed's
+count-of-one: every per-word count matched the feed's exact statistics — 9570 counted
+occurrences, per-key counts up to 1251 — and the skipped table held exactly the seven short
+words with their lengths. Same 81 s end to end, so at this size the run is all startup and
+drain, not throughput.
