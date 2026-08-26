@@ -264,3 +264,126 @@ names, same 1000 messages, same assertion.
 - **The reader gets `desired_partition_count = 1`** in the dynamic spec, where upstream leaves
   `parameters = {}`. It is moot with a single-tablet input queue, and only makes the intent
   explicit alongside the other three computations.
+
+## Java companion variant
+
+`companion_java/` re-runs the scenario with all six computations written in **Java**
+(`tech.ytsaurus:flow-*`, the Flow Java SDK), hosted by the same stock `flow_server` through the
+same four companion host classes — the host-class mapping of the C++ variant carries over
+computation by computation: `TSwiftOrderedSourceCompanionComputation` drives `ReadData`,
+`TTransformCompanionComputation` drives the two transforms and the reducer, and
+`TSwiftMapCompanionComputation` drives the two swift maps — the first Java port to put functions
+on the swift-map path of a cycle. The cycle needs nothing from the SDK at all: it is spec-level
+stream topology (`input_stream_ids` / `output_stream_ids` / `streams_dependency`), and
+`pipeline_java.yson.template` carries it over unchanged; `transform_a` routes by
+`message.getStreamId()`, exactly the C++ variant's passthrough rules. `ComputationCyclesMain`
+registers `CyclePassthrough` four times under four computation ids, the Java counterpart of
+registering `TCyclePassthroughFunction` four times. Everything runs under its own root
+`$YT_DEV_ROOT/computation_cycles_java`.
+
+The plumbing is `word_count_sync/companion_java`'s, unchanged: one entry point for the runner and
+the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the composite Gradle
+build substituting the unpublished SDK with a sibling ytsaurus checkout, the `collectRuntime` jar
+directory the runner ships from `java.library.path`, `TJavaCompanionManager` with only
+`main_class` set, `port_count = 3`, and — this cluster having no porto layers — the
+`eclipse-temurin:17-jre` docker image plus the `YT_FLOW_JDK_LAYERS='[]'` /
+`YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` overrides in `run.sh`.
+
+Adaptations against the C++ variant, stated explicitly — the asserts are unchanged:
+
+- **The routing tables travel in the spec's `parameters`, not in
+  `processing_function_parameters`.** The Java SDK reads user configuration via
+  `ctx.getComputationParameters()`, which serves `computations/<id>/parameters` — so
+  `passthrough_rules` and `sleep_per_message` sit next to `processing_mode`, and the runner logs
+  one startup `E SimpleRunner Found specs parseability error — Static spec has unrecognized
+  fields` naming exactly those fields on all four cycle computations. As in the Go variant it is
+  logged unconditionally and refuses nothing; the parameters do reach the companion — the routing
+  proves it. `processing_function` is omitted too: the Java SDK dispatches by computation id.
+- **The reducer groups its batch itself.** As in the Python and Go variants — and unlike the C++
+  keyed-batch adapter, whose `ProcessKey` is called per key — `onMessages` gets the request's
+  whole batch with keys mixed. The reducer groups by key in first-appearance order
+  (a `LinkedHashMap`, never map-hash order) and opens `/state` once per group; there is
+  effectively one key in this scenario, so the group is the batch.
+- **"No count yet" is not an absent state row.** Live, the state manager hands the companion a
+  present row with the key columns set and `count` null, so the null check is per column:
+  `getOrDefault()` folds the truly-absent case into an all-null row of the state schema, and
+  `row.get("count", Long.class) == null` is the direct translation of the C++
+  `optional<i64>.value_or(0)`. `testReducerToleratesNullCount` pins that shape offline.
+- **A missing passthrough rule throws `IllegalStateException`**, the port of the C++ variant's
+  throw — with the same retried-forever caveat.
+- The Flow Java SDK is not on Maven Central yet, so the Gradle build composite-includes a
+  sibling source checkout of `github.com/ytsaurus/ytsaurus` (clone it next to this repo, or
+  repoint with `-PytsaurusRoot=`) — the Java equivalent of the Go variant's `go.mod` `replace`.
+
+The cycle logic is proven offline first: `ComputationCyclesTest` drives all six computations
+through the SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the
+pipeline spec — the routing rules of every computation (including transform_a sending a fresh
+message around the loop and releasing a returned one), the missing-rule error, the reducer's
+counting over fresh, seeded and null-count state, mixed-key grouping, and a 1000-message
+simulation of the full cycle in batches of 30 ending at exactly `count == 1000` — no cluster
+needed. The trimmed spec omits the live `sleep_per_message` values, which only pace the pipeline.
+
+Run, from the repo root:
+
+```bash
+computation_cycles_and_buffers/companion_java/build.sh   # gradle test + collectRuntime (JDK 17+)
+python3 computation_cycles_and_buffers/companion_java/yt_sync.py  # once: objects under computation_cycles_java/
+
+python3 -c 'import json, sys
+for _ in range(1000):
+    sys.stdout.write(json.dumps({"data": "payload", "$$tablet_index": 0}) + "\n")' \
+  | yt insert-rows --format json "$YT_DEV_ROOT/computation_cycles_java/input_queue"
+
+computation_cycles_and_buffers/companion_java/run.sh     # deploys; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/computation_cycles_java/pipeline"
+yt select-rows "* from [$YT_DEV_ROOT/computation_cycles_java/state]" --format json
+./stop.sh computation_cycles_java                        # aborts the vanilla operation
+```
+
+On this demo cluster, run the erasure-codec workaround described for the Go variant right after
+`yt_sync.py` — here it is needed only for the pipeline system tables (the user tables already
+come out with `erasure_codec = none`), and the same empty-table `unmounting` hang applies: use a
+plain async `yt unmount-table` and `--force` the tablets still `transient` after ~20 s.
+
+### Observed output
+
+Recorded from the live runs on the demo cluster, `flow_server` and the SDK built from the
+ytsaurus checkout at `5eefc43c4d6` (flow Java SDK last touched by `99b76e4f734`). The runner
+returned on its own both times with
+
+```
+I	FlowClient	Pipeline completed (Pipeline: <…>/computation_cycles_java/pipeline)
+```
+
+Run 1 (uninterrupted, launched 22:48:04, completed 22:50:17 — ~133 s):
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/computation_cycles_java/pipeline"
+completed
+
+$ yt select-rows "* from [$YT_DEV_ROOT/computation_cycles_java/state]" --format json
+{"hash":8436339620933999394,"data":"payload","count":1000}
+```
+
+One row, `count == 1000`, byte-identical to the C++, Python and Go reference rows including the
+hash. While the JVM boots the controller logs the usual round of companion `Connection refused`
+(12 lines here — between the Go binary's zero and the Python bundle's minute).
+
+Run 2 (cut buffers: scenario recreated, paused mid-flight per the sequence in the C++ section
+above): polling the count every two seconds, the first non-zero value appeared 58 s after launch —
+`pause-pipeline` at `count = 1`, `paused` four seconds later with the state table at
+
+```
+{"hash":8436339620933999394,"data":"payload","count":2}
+```
+
+— two of 1000 messages committed, the rest in flight or buffered inside the cycle. After
+`start-pipeline` the pipeline went back to `working` and completed 112 s later with the same
+single row:
+
+```
+{"hash":8436339620933999394,"data":"payload","count":1000}
+```
+
+Exactly-once held across the cut with the user code out of process in Java.

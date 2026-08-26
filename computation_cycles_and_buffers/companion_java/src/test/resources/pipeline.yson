@@ -1,0 +1,156 @@
+{
+    spec = {
+        computations = {
+            "reader" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TSwiftOrderedSourceCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(data)"; type = "uint64"; required = %true};
+                    {name = "data"; type = "string"};
+                ];
+                input_stream_ids = ["input"];
+                output_stream_ids = ["reader_output"];
+                parameters = {};
+                external_state_managers = {};
+            };
+            "transform_a" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(data)"; type = "uint64"; required = %true};
+                    {name = "data"; type = "string"};
+                ];
+                input_stream_ids = ["reader_output"; "sb1"];
+                output_stream_ids = ["ta1"; "ta2"];
+                parameters = {
+                    processing_mode = "exactly_once";
+                    passthrough_rules = {
+                        reader_output = "ta1";
+                        sb1 = "ta2";
+                    };
+                };
+                external_state_managers = {};
+            };
+            "swift_map_a" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TSwiftMapCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(data)"; type = "uint64"; required = %true};
+                    {name = "data"; type = "string"};
+                ];
+                input_stream_ids = ["ta1"];
+                output_stream_ids = ["sa1"];
+                parameters = {
+                    passthrough_rules = {
+                        ta1 = "sa1";
+                    };
+                };
+                external_state_managers = {};
+            };
+            "transform_b" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(data)"; type = "uint64"; required = %true};
+                    {name = "data"; type = "string"};
+                ];
+                input_stream_ids = ["sa1"];
+                output_stream_ids = ["tb1"];
+                parameters = {
+                    processing_mode = "exactly_once";
+                    passthrough_rules = {
+                        sa1 = "tb1";
+                    };
+                };
+                external_state_managers = {};
+            };
+            "swift_map_b" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TSwiftMapCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(data)"; type = "uint64"; required = %true};
+                    {name = "data"; type = "string"};
+                ];
+                input_stream_ids = ["tb1"];
+                output_stream_ids = ["sb1"];
+                parameters = {
+                    passthrough_rules = {
+                        tb1 = "sb1";
+                    };
+                };
+                external_state_managers = {};
+            };
+            "reducer" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(data)"; type = "uint64"; required = %true};
+                    {name = "data"; type = "string"};
+                ];
+                input_stream_ids = ["ta2"];
+                output_stream_ids = [];
+                parameters = {
+                    processing_mode = "exactly_once";
+                };
+                external_state_managers = {
+                    "/state" = {
+                        parameters = {path = "//placeholder"};
+                    };
+                };
+            };
+        };
+        streams = {
+            "input" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "reader_output" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "ta1" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "sa1" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "tb1" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "sb1" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "ta2" = {
+                schema = [
+                    {name = "data"; type = "string"};
+                ];
+            };
+        };
+    };
+    dynamic_spec = {
+        computations = {
+            "reader" = {
+                parameters = {};
+            };
+            "transform_a" = {
+                parameters = {};
+            };
+            "swift_map_a" = {
+                parameters = {};
+            };
+            "transform_b" = {
+                parameters = {};
+            };
+            "swift_map_b" = {
+                parameters = {};
+            };
+            "reducer" = {
+                parameters = {};
+            };
+        };
+    };
+}
