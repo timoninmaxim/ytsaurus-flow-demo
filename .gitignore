@@ -5,3 +5,8 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+pipeline_java.yson
+.gradle/
+key_visitor/companion_java/build/
+key_visitor/logs/
+key_visitor/companion_java/logs/

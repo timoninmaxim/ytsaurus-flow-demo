@@ -188,3 +188,85 @@ ok: the latest visit of every key carries the v2 payload
 output rows: 30; per-key max visit_index range: 1..2
 OK: the final key-visitor pass swept the post-completion state of every key
 ```
+
+## Java companion variant
+
+`companion_java/` re-runs the same scenario with the visit tester written in **Java**, hosted
+out-of-process by the **stock** `flow_server` through the same companion protocol as the Python
+and Go variants. The topology, choreography and asserts are identical:
+
+- `companion_java/src/main/java/.../VisitTester.java` — the visit tester with the Flow Java SDK
+  (`tech.ytsaurus.flow`, modules `flow-core`/`flow-runner`): a `RowFunction` whose `onMessage`
+  stores the payload in the per-key internal state `user_state`
+  (`StateDescriptors.yson("user_state", UserState.class)`, an `@Entity` POJO) and whose
+  `onVisit` emits the stored payload with the incremented per-key `visit_index`. Unlike Go,
+  state mutations do **not** auto-flush — every change ends with an explicit `accessor.set(...)`,
+  as in the word_count example.
+- **The pipeline entry point is also the runner**, like Go: `KeyVisitorMain` calls
+  `FlowApplication.run(args, context)`, which serves the companion when the worker exports
+  `YT_FLOW_MODE` and otherwise launches the pipeline (`--config`/`--flow-bin`), enriching the
+  spec and execing `flow_server`. The runner ships every jar it finds on `java.library.path`
+  into the worker's `local_files` under `java_companion/` and completes the
+  `TJavaCompanionManager` resource (`classpath = "java_companion/*"`), so the launch script
+  must point `-Djava.library.path` at the collected classpath directory
+  (`companion_java/build/companion-libs`, produced by the `collectRuntime` Gradle task).
+
+Adaptations, stated explicitly — the asserts are unchanged:
+
+- **The Flow Java SDK is not on Maven Central yet** (checked: no `tech.ytsaurus:flow-core`
+  artifact, and the checkout's flow modules carry no `maven-publish` config either), so
+  `companion_java/settings.gradle.kts` composite-includes a sibling source checkout of
+  `github.com/ytsaurus/ytsaurus` and substitutes the `tech.ytsaurus:flow-*` coordinates with
+  its subprojects — the Java equivalent of the Go variant's `go.mod` `replace`.
+- **JDK delivery into the job**: by default the Java runner mounts internal JDK *porto layers*,
+  which do not exist on this cluster (its exec nodes run a CRI job environment). The overrides
+  the SDK provides for its own local tests do the job here too: `YT_FLOW_JDK_LAYERS='[]'` drops
+  the layers and `YT_FLOW_JDK_BIN_PATH` points at the java binary of the worker task's
+  `docker_image` — `docker.io/library/eclipse-temurin:17-jre` in the template (the registry
+  prefix is required: a bare `eclipse-temurin:17-jre` is resolved against the cluster's Cypress
+  image registry and fails the operation).
+- **`vanilla/controller` must be spelled out** (`count = 1`, the C++ launcher's own default):
+  the Java runner unconditionally creates the `controller` map while patching JDK layers, and
+  an empty map fails `flow_server` config parsing on the missing required `count`.
+- Unlike the Go runner, the Java one does not bump the worker `port_count` for the companion
+  port; the template sets `port_count = 3` explicitly (on this cluster the C++ launcher's
+  no-network-project default would also cover it).
+
+The visit logic is proven offline first: `companion_java/src/test/.../VisitTesterTest.java`
+drives `Computation.doProcess` with hand-built requests (message→state, visit→emission,
+unseeded-key silence, the v1-visit-v2-visit supersession, counter survival across payload
+updates) — no cluster needed. The SDK's `flow-test-utils` harness cannot inject visits yet, so
+the test builds `RequestContext`s directly.
+
+Everything runs under its own Cypress root, `$YT_DEV_ROOT/key_visitor_java`;
+`companion_java/{yt_sync,prepare_data,verify}.py` are the same bootstrap/seed/assert scripts
+pointed at that root. On this demo cluster, run the erasure-codec workaround right after
+`yt_sync.py` (see the Go section).
+
+Run, from the repo root:
+
+```bash
+key_visitor/companion_java/build.sh     # gradle test + collectRuntime (JDK 17+; uses ../ytsaurus/gradlew)
+
+python3 key_visitor/companion_java/yt_sync.py       # once: Cypress objects under key_visitor_java/
+python3 key_visitor/companion_java/prepare_data.py  # 20 keys as v1, then the same 20 as v2
+
+key_visitor/companion_java/run.sh       # renders the template, launches the runner, returns on completion
+
+python3 key_visitor/companion_java/verify.py
+./stop.sh key_visitor_java              # aborts the vanilla operation
+```
+
+Recorded from the live run on the demo cluster, flow core build `baaaeedb` (the commit hash the
+server logs at startup); the runner launched at 23:57:50 and printed `Pipeline completed` at
+00:00:29 — about 160 seconds
+end to end, with `verify.py` passing on its first run:
+
+```
+$ python3 key_visitor/companion_java/verify.py
+ok: pipeline reached `completed`
+ok: all 20 seeded keys were visited
+ok: the latest visit of every key carries the v2 payload
+output rows: 25; per-key max visit_index range: 1..2
+OK: the final key-visitor pass swept the post-completion state of every key
+```
