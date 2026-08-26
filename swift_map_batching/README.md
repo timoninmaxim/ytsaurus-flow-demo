@@ -472,3 +472,102 @@ partial-traverse warnings **bursty, not continuous** — 13:28:56 to 13:29:21, g
 jobs were up. The pause/resume cut and the flag-off contrast were not repeated here: as with the
 Python variant, they exercise the engine's meta setter and merge tracker, which every variant
 shares; what changes is only where the merge is computed.
+
+## Java companion variant
+
+`companion_java/` re-runs the scenario with the batcher and the writer written in **Java**
+(`tech.ytsaurus.flow`, modules `flow-core`/`flow-runner`), hosted by the same stock `flow_server`
+through the same two companion host classes. The semantics are the Python and Go variants' — the
+SDK hands the user code the whole mixed-key batch, so the key grouping and the per-group parent
+scoping are user work — with the Java-specific points stated explicitly:
+
+- **Parent scoping.** `BatchFunction.onMessages` receives the request's whole message batch, keys
+  mixed, with all of it as the default parent set. One merged output from that collector would be
+  a cross-key merge, so `Batcher` groups by the key payload's `group_key` itself and emits each
+  merged message through the fresh collector `output.setParentIds(...)` returns — parents are
+  exactly that key's messages, the default collector stays unused. Same returns-a-new-collector
+  semantics as Python's `set_parent_ids` and Go's `WithParentIDs`.
+- **Determinism under swift hosting.** A swift replay must reproduce the same outputs with the
+  same parent sequences in the same order. The companion gRPC server may call user functions
+  concurrently across requests, so `Batcher` keeps no mutable state; and the grouping uses a
+  `LinkedHashMap`, so group order is first-appearance order and each group's parent ids and event
+  ids stay in batch order. Java is gentler here than Go — insertion-ordered maps are in the
+  standard library and `HashMap` iteration, while unspecified, is not randomized per run — but the
+  obligation is the same, and `BatcherWriterTest` pins the group order, the per-group parent ids
+  and the run-to-run reproducibility offline.
+- **The pipeline entry point is also the runner**, as in `key_visitor/companion_java`:
+  `SwiftMapBatchingMain` calls `FlowApplication.run(args, context)`, which serves the two
+  computations over the companion protocol inside the worker job and otherwise launches the
+  pipeline (`--config`/`--flow-bin`), shipping every jar on `java.library.path` into the worker's
+  `local_files` under `java_companion/` and completing the `TJavaCompanionManager` resource. The
+  build, the JDK-delivery overrides (`YT_FLOW_JDK_LAYERS='[]'` + `YT_FLOW_JDK_BIN_PATH` against
+  the `docker_image`'s JRE), the explicit `vanilla/controller = {count = 1}` and `port_count = 3`,
+  and the Maven-Central substitution in `settings.gradle.kts` are all as documented in
+  `key_visitor/README.md`'s Java section.
+- **The offline tests bypass `flow-test-utils`' `TestComputationHarness`.** The harness's
+  request-side proto conversion overwrites every message id with a fixed placeholder
+  (`MessageProtoMapper.FAKE_MESSAGE_ID = "1"`), so the per-group *parent ids* — the point of this
+  scenario's tests — come back as `[1, 1, 1]` whatever the inputs were. `BatcherWriterTest`
+  therefore drives `Computation.doProcess` with hand-built requests, the style of
+  `key_visitor/companion_java`'s tests, where message ids survive.
+- `companion_java/{yt_sync,prepare_data}.py` are the reference bootstrap/seed scripts pointed at
+  the variant's own root `$YT_DEV_ROOT/swift_map_batching_java`; `companion_java/verify.py`
+  carries the unchanged asserts (state `working`, `event_id` set == `range(total)`, zero
+  duplicates, batch_size histogram).
+
+Run, from the repo root:
+
+```bash
+swift_map_batching/companion_java/build.sh     # gradle test + collectRuntime (JDK 17+; uses ../ytsaurus/gradlew)
+
+python3 swift_map_batching/companion_java/yt_sync.py         # once: objects under swift_map_batching_java/
+python3 swift_map_batching/companion_java/prepare_data.py 2000 0   # insert *before* deploying
+
+ALLOW_BATCHING=%true swift_map_batching/companion_java/run.sh
+                     # renders the template, launches the runner, execs flow_server;
+                     # the source is not finite, so it streams until Ctrl-C (which only detaches)
+
+python3 swift_map_batching/companion_java/verify.py 2000
+./stop.sh swift_map_batching_java              # stops the pipeline, aborts the operation
+```
+
+On this demo cluster (4/9 data nodes), run the erasure-codec workaround right after `yt_sync.py`
+and before deploying — as described at the end of the Go section, against
+`$YT_DEV_ROOT/swift_map_batching_java`.
+
+Recorded from the live run on the demo cluster, `flow_server` flow core build `baaaeedb` (logged
+by the runner on the way in), first wave (2000 events inserted before the deploy):
+
+```
+$ python3 swift_map_batching/companion_java/verify.py 2000
+pipeline state: working
+rows: 2000 distinct: 2000 equals range(2000): True
+duplicated event ids: 0 extra rows: 0 max copies: 1
+batch_size histogram: [(200, 2000)]
+OK: every event delivered exactly once
+```
+
+Identical to the C++, Python and Go variants' first runs down to the histogram: every one of the
+ten keys was merged whole in a single epoch, so the Java batcher put ten 200-parent messages
+across the swift map. A second wave of 20000 events fed into the running pipeline drained within
+seconds:
+
+```
+$ python3 swift_map_batching/companion_java/verify.py 22000
+pipeline state: working
+rows: 22000 distinct: 22000 equals range(22000): True
+duplicated event ids: 0 extra rows: 0 max copies: 1
+batch_size histogram: [(500, 7000), (1000, 7000), (200, 3600), (250, 1250), (150, 900)]
+OK: every event delivered exactly once
+```
+
+Timings: runner launched 00:22:23 → vanilla operation started 00:22:30 → `working` with all
+eleven jobs young by 00:23:18, wave 1 fully in the output queue within the next minute. Startup
+noise sits between the Python and Go profiles: no `Unknown processing function` parseability
+errors (the Java SDK, like Go, dispatches by `computation_id` and the spec names no
+`processing_function`), a bounded burst of six `FlowViewKeeper is not initialized` /
+`Failed to check pipeline` lines while the controller came up, and the usual partial-traverse
+warnings — bursty, gone once the eleven jobs were up. The pause/resume cut and the flag-off
+contrast were not repeated here: as with the Python and Go variants, they exercise the engine's
+meta setter and merge tracker, which every variant shares; what changes is only where the merge
+is computed.
