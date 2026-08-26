@@ -317,3 +317,107 @@ graph, same stream names, same four users, same assertion.
   unexamined: `batch_duration = 100` (ms) on all three computations instead of the 1 s default, so
   the pipeline finishes quickly, and `job_tracker/job_threads = 4` instead of the default 30,
   because five jobs on one worker need no more. Raise both for anything with real throughput.
+
+## Java companion variant
+
+`companion_java/` re-runs the scenario with the accumulator and the joiner written in **Java**,
+hosted by the stock `flow_server` through the same `TTransformCompanionComputation` host class;
+the reader stays the stock C++ source computation, exactly as in the C++ variant. The topology,
+the external-state restructuring and the assertion are unchanged: `StateJoinerMain` registers both
+functions, `pipeline_java.yson.template` is the same graph under its own root
+`$YT_DEV_ROOT/state_joiner_java`, and the delivery is `key_visitor/companion_java`'s runner-mode
+flow unchanged — the same entry point in runner mode ships the 65 collected jars, points the
+`TJavaCompanionManager` resource at `main_class`, and execs `flow_server`; the worker task runs in
+a plain `eclipse-temurin:17-jre` docker image with `port_count = 3`.
+
+What this variant demonstrates on top of the C++ one: **`external_state_joiners` is fully usable
+from Java.** The worker-side host ships the joined states with each batch, and the SDK surfaces
+them as `StateDescriptors.externalReadOnly("/user_total")` — resolved through the same
+`ctx.getState(descriptor, message)` call as every other state kind, but returning a
+`ReadOnlyExternalStateAccessor` whose `set()`/`clear()` throw `UnsupportedOperationException`:
+the SDK making "joiners never write back" explicit rather than a missing feature. The joiner is a
+`BatchFunction` — the Java counterpart of the `IBatchProcessFunction` granularity the upstream
+test uses — and receives the request's whole message batch keys mixed, which is fine here because
+the join key is the message's own key (`join_on = {}`) and no grouping is needed. The two state
+facilities coexist in one companion process: the accumulator's mutable
+`StateDescriptors.external(...)` next to the joiner's read-only descriptor, mirroring the C++
+`TMutableStateKeyClient` / `TJoinedStateKeyClient` pair as three factory methods on one class.
+
+Everything in "What this scenario found" above applies unchanged, because the limits live in the
+worker-side host and the wire contract, not in the user's language: `state_joiners` is unavailable
+to Java exactly as to C++ and Python companions, and `key_schema_override` under an external
+state joiner would hit the same worker-killing `GetOrCrash` before any Java code runs. This spec
+therefore joins on the same key, like the other two.
+
+Deliberate differences against the C++ companion:
+
+- **`processing_function` is omitted.** The Java SDK dispatches by `computation_id`
+  (`registerComputation(... .setComputationId("accumulator") ...)`), so the spec does not name
+  the functions.
+- **The missing-join sentinel handles both miss shapes with one expression.** The C++ joiner
+  distinguishes an uninitialized accessor from an all-null row; in Java both collapse into
+  `state.get()` being empty or the `Total` column reading `null`, so
+  `state.get().map(p -> p.get("Total", Long.class)).orElse(null)` covers the un-shipped-state
+  case and the reachable miss — no row in `user_totals`, shipped as an all-null payload — alike,
+  reported as `Total = -1` for the same reason (an exception in a companion is retried forever).
+  No `-1` appears in the run below.
+- **The join is unit-tested offline.** `StateJoinerTest` drives both computations through
+  `flow-test-utils`' `TestComputationHarness`, seeding the joined state with
+  `TestDoProcessRequest.setState(JoinedExternalStateDescriptor, key, payload)` — the harness runs
+  the real gRPC request mappers, so the joined-state path in the test is the wire path. The
+  all-null-row miss and the absent-state miss are both pinned to `-1` there.
+
+Run, from the repo root:
+
+```bash
+state_joiner/companion_java/build.sh            # gradle: unit tests + build/companion-libs
+python3 state_joiner/companion_java/yt_sync.py  # once: objects under state_joiner_java/
+
+python3 -c 'import json, sys
+for i, amount in enumerate([10, 20, 30, 40]):
+    sys.stdout.write(json.dumps({"UserId": "user-%d" % i, "Amount": amount, "$$tablet_index": 0}) + "\n")' \
+  | yt insert-rows --format json "$YT_DEV_ROOT/state_joiner_java/input_queue"
+
+state_joiner/companion_java/run.sh              # stock binary; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_java/pipeline"
+yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/output_table]" --format json
+yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/user_totals]" --format json
+./stop.sh state_joiner_java                     # aborts the vanilla operation
+```
+
+On this demo cluster, run the erasure-codec workaround described in the Python variant's section
+right after `yt_sync.py` — here, as in `word_count_sync`'s Java run, only the pipeline system
+tables needed it (eight tables came out `reed_solomon_3_3`; the user tables were already `none`),
+and the empty tables sat in `mounted` refusing a plain unmount for ~20 s before
+`yt unmount-table --force` cleared them.
+
+Recorded from the live run on the demo cluster, `flow_server` and the SDK built from ytsaurus
+flow-core commit `baaaeedbe3c` (heads/main):
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_java/pipeline"
+completed
+
+$ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/output_table]" --format json
+{"UserId":"user-2","Total":30}
+{"UserId":"user-0","Total":10}
+{"UserId":"user-1","Total":20}
+{"UserId":"user-3","Total":40}
+
+$ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/user_totals]" --format json
+{"UserId":"user-2","Total":30}
+{"UserId":"user-0","Total":10}
+{"UserId":"user-1","Total":20}
+{"UserId":"user-3","Total":40}
+```
+
+Identical to the C++ and Python variants' output: `(UserId, Total)` sorted is the input amounts,
+the two tables agree, no row is `-1`, and the pipeline's own `states` table is empty. Timings:
+runner launched 23:10:02 UTC → pipeline `working` 23:10:45 → all five jobs completed by 23:11:23
+→ `completed` 23:11:36, 94 s end to end with both the binary and the jars already in the
+cluster's file cache. The log profile was the shortest of the three variants: zero `E`-level
+lines and zero parseability errors, only the usual companion-startup noise (nine
+`GetCompanionInfo` connection retries while the companion binds its port, three
+`CompanionManager` resource warm-up worker errors, `partial traverse coverage` until the jobs
+run).

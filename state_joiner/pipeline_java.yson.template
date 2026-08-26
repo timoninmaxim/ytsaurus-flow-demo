@@ -1,0 +1,155 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "abort_on_specs_parseability_error" = %false;
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/state_joiner_java/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "output_stream_ids" = ["events"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/state_joiner_java/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/state_joiner_java/consumer";
+                            "finite" = %true;
+                        };
+                    };
+                };
+            };
+            "accumulator" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "Hash"; "expression" = "farm_hash(UserId)"; "type" = "uint64"; required = %true;};
+                    {"name" = "UserId"; "type" = "string"; required = %true;};
+                ];
+                "input_stream_ids" = ["events"];
+                "output_stream_ids" = ["users"];
+                "external_state_managers" = {
+                    "/user_total" = {
+                        "external_state_manager_class_name" = "NYT::NFlow::TSimpleExternalStateManager";
+                        "parameters" = {
+                            "path" = "${YT_DEV_ROOT}/state_joiner_java/user_totals";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+            "joiner" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "Hash"; "expression" = "farm_hash(UserId)"; "type" = "uint64"; required = %true;};
+                    {"name" = "UserId"; "type" = "string"; required = %true;};
+                ];
+                "input_stream_ids" = ["users"];
+                "output_stream_ids" = ["results"];
+                "external_state_joiners" = {
+                    "/user_total" = {
+                        "external_state_joiner_class_name" = "NYT::NFlow::TSimpleExternalStateJoiner";
+                        "join_on" = {};
+                        "parameters" = {
+                            "path" = "${YT_DEV_ROOT}/state_joiner_java/user_totals";
+                        };
+                    };
+                };
+                "sinks" = {
+                    "out" = {
+                        "sink_class_name" = "NYT::NFlow::NSortedDynamicTable::TSyncSink";
+                        "input_stream_ids" = ["results"];
+                        "parameters" = {
+                            "table_path" = "${YT_DEV_ROOT}/state_joiner_java/output_table";
+                        };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+            };
+        };
+        "streams" = {
+            "events" = {
+                "schema" = [
+                    {"name" = "UserId"; "type" = "string"; required = %true;};
+                    {"name" = "Amount"; "type" = "int64"; required = %true;};
+                ];
+            };
+            "users" = {
+                "schema" = [
+                    {"name" = "UserId"; "type" = "string"; required = %true;};
+                    {"name" = "Bucket"; "type" = "uint64"; required = %true;};
+                ];
+            };
+            "results" = {
+                "schema" = [
+                    {"name" = "UserId"; "type" = "string"; required = %true;};
+                    {"name" = "Total"; "type" = "int64"; required = %true;};
+                ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
+                "parameters" = {
+                    "main_class" = "tech.ytsaurus.flow.demo.statejoiner.StateJoinerMain";
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 1;
+                };
+            };
+            "accumulator" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 2;
+                };
+            };
+            "joiner" = {
+                "batch_duration" = 100;
+                "parameters" = {
+                    "desired_partition_count" = 2;
+                };
+            };
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "controller" = {"count" = 1;};
+        "worker" = {
+            "count" = 1;
+            "port_count" = 3;
+            "docker_image" = "docker.io/library/eclipse-temurin:17-jre";
+        };
+        "node_config" = {
+            "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};
+        };
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
