@@ -1,0 +1,59 @@
+{
+    spec = {
+        computations = {
+            "reader" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TSwiftOrderedSourceCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(key)"; type = "uint64"; required = %true};
+                    {name = "key"; type = "string"};
+                ];
+                input_stream_ids = ["input"];
+                output_stream_ids = ["data"];
+                parameters = {
+                    fail_key = "1100";
+                    error_key = "1101";
+                    fail_comment = "TELEMETRY_DEMO_INTENTIONAL_FAIL";
+                    fail_attempts = 3;
+                };
+                external_state_managers = {};
+            };
+            "processor" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(key)"; type = "uint64"; required = %true};
+                    {name = "key"; type = "string"};
+                ];
+                input_stream_ids = ["data"];
+                output_stream_ids = [];
+                parameters = {
+                    sleep_per_message_ms = 0;
+                };
+                external_state_managers = {};
+            };
+        };
+        streams = {
+            "input" = {
+                schema = [
+                    {name = "key"; type = "string"};
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "data" = {
+                schema = [
+                    {name = "key"; type = "string"};
+                    {name = "data"; type = "string"};
+                ];
+            };
+        };
+    };
+    dynamic_spec = {
+        computations = {
+            "reader" = {
+                parameters = {};
+            };
+            "processor" = {
+                parameters = {};
+            };
+        };
+    };
+}
