@@ -1,0 +1,40 @@
+use ytdemo;
+
+pragma Engine = "ytflow";
+
+pragma Ytflow.Cluster = "ytdemo";
+pragma Ytflow.PipelinePath = "$PIPELINE_PATH";
+
+pragma Ytflow.YtConsumerPath = "$SCENARIO_ROOT/main_consumer";
+pragma Ytflow.YtProducerPath = "$SCENARIO_ROOT/main_producer";
+
+pragma Ytflow.Pool = "$YT_POOL";
+
+pragma Ytflow.ControllerRpcPort = "27160";
+pragma Ytflow.ControllerMonitoringPort = "27161";
+pragma Ytflow.WorkerRpcPort = "27162";
+pragma Ytflow.WorkerMonitoringPort = "27163";
+
+pragma Ytflow.ControllerCount = "1";
+pragma Ytflow.ControllerCpuLimit = "1.0";
+pragma Ytflow.ControllerMemoryLimit = "1G";
+
+pragma Ytflow.WorkerCount = "1";
+pragma Ytflow.WorkerCpuLimit = "1.0";
+pragma Ytflow.WorkerMemoryLimit = "1G";
+
+$stream = select
+    AsList(
+        AsStruct(int64_field as value, "original" as label),
+        AsStruct(int64_field * int64_field as value, "double" as label)
+    ) as items,
+    LENGTH(string_field) > 3 as condition
+from `$SCENARIO_ROOT/input_queue`;
+
+insert into `$SCENARIO_ROOT/output_queue`
+select
+    items.value as value,
+    items.label as label,
+    condition as condition
+from $stream
+flatten list by (items);
