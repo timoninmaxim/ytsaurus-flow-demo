@@ -11,21 +11,27 @@ SCENARIO=${1:?usage: ./yql_common/stop.sh <scenario>}
 SCENARIO_ROOT="$YT_DEV_ROOT/$SCENARIO"
 PIPELINE_PATH="$SCENARIO_ROOT/pipeline"
 
-# An operation alias cannot be aborted directly; map it to the id first.
-alias=$(yt get "$PIPELINE_PATH/@current_vanilla_operation/alias" 2>/dev/null | tr -d '"' || true)
-if [ -n "$alias" ]; then
-    op_id=$(yt list-operations --state running --format json 2>/dev/null \
-        | python3 -c '
-import json, sys
-alias = sys.argv[1]
-for op in json.load(sys.stdin).get("operations", []):
-    if op.get("brief_spec", {}).get("alias") == alias:
-        print(op["id"])' "$alias")
-    if [ -n "$op_id" ]; then
-        echo "aborting operation $op_id ($alias)"
-        yt abort-op "$op_id"
-    fi
+# The ytflow gateway records its operation on the pipeline node.
+op_id=$(yt get "$PIPELINE_PATH/@_yql_ytflow_vanilla_info/operation_id" 2>/dev/null | tr -d '"' || true)
+if [ -n "$op_id" ]; then
+    state=$(yt get-operation "$op_id" --attribute state --format json 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))' || true)
+    case "$state" in
+        completed|failed|aborted|"") ;;
+        *)
+            echo "aborting operation $op_id ($state)"
+            yt abort-op "$op_id"
+            ;;
+    esac
 fi
 
+# The gateway's master lock lingers for a few seconds after the abort.
+for _ in 1 2 3 4 5 6; do
+    if yt remove -r -f "$SCENARIO_ROOT" 2>/dev/null; then
+        echo "removed $SCENARIO_ROOT"
+        exit 0
+    fi
+    sleep 5
+done
 yt remove -r -f "$SCENARIO_ROOT"
 echo "removed $SCENARIO_ROOT"
