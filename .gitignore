@@ -5,3 +5,6 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+gateways.conf
+yql_*/query.yql
+ytrun.log
