@@ -1,0 +1,52 @@
+use ytdemo;
+
+pragma Engine = "ytflow";
+
+pragma Ytflow.Cluster = "ytdemo";
+pragma Ytflow.PipelinePath = "$PIPELINE_PATH";
+
+pragma Ytflow.YtConsumerPath = "$SCENARIO_ROOT/main_consumer";
+pragma Ytflow.YtProducerPath = "$SCENARIO_ROOT/main_producer";
+
+pragma Ytflow.Pool = "$YT_POOL";
+
+pragma Ytflow.ControllerRpcPort = "27140";
+pragma Ytflow.ControllerMonitoringPort = "27141";
+pragma Ytflow.WorkerRpcPort = "27142";
+pragma Ytflow.WorkerMonitoringPort = "27143";
+
+pragma Ytflow.ControllerCount = "1";
+pragma Ytflow.ControllerCpuLimit = "1.0";
+pragma Ytflow.ControllerMemoryLimit = "1G";
+
+pragma Ytflow.WorkerCount = "1";
+pragma Ytflow.WorkerCpuLimit = "1.0";
+pragma Ytflow.WorkerMemoryLimit = "1G";
+
+$input_stream =
+    select
+        key || "_before" as key_before,
+        key,
+        value
+    from `$SCENARIO_ROOT/input_queue`
+    where value > 2;
+
+$joined_stream =
+    select
+        left_arg.key as key,
+        left_arg.value as value,
+        left_arg.key_before,
+        right_arg.kv_value
+    from $input_stream as left_arg
+    inner join `$SCENARIO_ROOT/kv_table` as right_arg
+    using (key);
+
+insert into `$SCENARIO_ROOT/output_queue`
+select
+    key,
+    value,
+    `left_arg.key_before` as key_before,
+    key || "_after" as key_after,
+    `right_arg.kv_value` as kv_value
+from $joined_stream
+where value * 2 <= `right_arg.kv_value`;
