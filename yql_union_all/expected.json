@@ -1,0 +1,6 @@
+{"string_field": "foo_first", "int64_field": 1}
+{"string_field": "bar_first", "int64_field": 10}
+{"string_field": "foo_second", "int64_field": 1}
+{"string_field": "bar_second", "int64_field": 10}
+{"string_field": "foo_third", "int64_field": 1}
+{"string_field": "bar_third", "int64_field": 10}
