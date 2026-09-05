@@ -1,0 +1,52 @@
+Yt {
+  GatewayThreads: 1
+  ClusterMapping {
+    Name: "ytdemo"
+    YTName: "ytdemo"
+    Cluster: "$YT_PROXY"
+    YTToken: "$YT_TOKEN"
+    Default: true
+  }
+}
+Ytflow {
+  GatewayThreads: 1
+  YtflowWorkerBin: "$YTFLOW_WORKER_BIN"
+  ClusterMapping {
+    Name: "ytdemo"
+    RealName: "ytdemo"
+    ProxyUrl: "$YT_PROXY_INTERNAL"
+    Token: "$YT_TOKEN"
+  }
+  DefaultSettings { Name: "GracefulUpdate" Value: "1" }
+  DefaultSettings { Name: "UpdateTimeout" Value: "600s" }
+  DefaultSettings { Name: "_RpcTimeout" Value: "30s" }
+  DefaultSettings { Name: "_MasterLockTimeout" Value: "2m" }
+  DefaultSettings { Name: "_MasterLockPingPeriod" Value: "30s" }
+  DefaultSettings { Name: "_FiniteStreams" Value: "true" }
+  DefaultSettings { Name: "_RunVanillaOperation" Value: "true" }
+  DefaultSettings { Name: "EnableComputationPatternResources" Value: "false" }
+  DefaultSettings { Name: "YtPartitionCount" Value: "1" }
+  DefaultSettings { Name: "_LogsDirectory" Value: "logs" }
+  DefaultSettings { Name: "_ControllerWriteFullLogsToYT" Value: "true" }
+  DefaultSettings { Name: "_WorkerWriteLogsToYT" Value: "true" }
+  DefaultSettings { Name: "_ControllerWriteLogsToFile" Value: "false" }
+  DefaultSettings { Name: "_WorkerWriteLogsToFile" Value: "false" }
+  DefaultSettings { Name: "_ControllerLogLevel" Value: "debug" }
+  DefaultSettings { Name: "_WorkerLogLevel" Value: "debug" }
+  DefaultSettings { Name: "_ControllerEnableStderrLogging" Value: "false" }
+  DefaultSettings { Name: "_WorkerEnableStderrLogging" Value: "false" }
+  DefaultSettings { Name: "_ControllerLoggingEnableCompression" Value: "false" }
+  DefaultSettings { Name: "_WorkerLoggingEnableCompression" Value: "false" }
+  DefaultSettings { Name: "_ControllerLoggingCompressionMethod" Value: "Zstd" }
+  DefaultSettings { Name: "_WorkerLoggingCompressionMethod" Value: "Zstd" }
+  DefaultSettings { Name: "_ControllerLoggingCompressionLevel" Value: "1" }
+  DefaultSettings { Name: "_WorkerLoggingCompressionLevel" Value: "1" }
+  DefaultSettings { Name: "_ControllerLoggingMaxTotalSizeToKeep" Value: "1G" }
+  DefaultSettings { Name: "_WorkerLoggingMaxTotalSizeToKeep" Value: "1G" }
+  DefaultSettings { Name: "_ControllerLoggingMaxSegmentCountToKeep" Value: "10" }
+  DefaultSettings { Name: "_WorkerLoggingMaxSegmentCountToKeep" Value: "10" }
+  DefaultSettings { Name: "_SwitchComputationNodeBufferSizeBytes" Value: "0" }
+  DefaultSettings { Name: "LookupJoinInflightRowLimit" Value: "1000" }
+  DefaultSettings { Name: "LookupJoinInflightLookupLimit" Value: "100" }
+  DefaultSettings { Name: "LookupJoinLookupTimeout" Value: "30s" }
+}
