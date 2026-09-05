@@ -1,0 +1,38 @@
+use ytdemo;
+
+pragma Engine = "ytflow";
+
+pragma Ytflow.Cluster = "ytdemo";
+pragma Ytflow.PipelinePath = "$PIPELINE_PATH";
+
+pragma Ytflow.YtConsumerPath = "$SCENARIO_ROOT/main_consumer";
+pragma Ytflow.YtProducerPath = "$SCENARIO_ROOT/main_producer";
+
+pragma Ytflow.Pool = "$YT_POOL";
+
+pragma Ytflow.ControllerRpcPort = "27150";
+pragma Ytflow.ControllerMonitoringPort = "27151";
+pragma Ytflow.WorkerRpcPort = "27152";
+pragma Ytflow.WorkerMonitoringPort = "27153";
+
+pragma Ytflow.ControllerCount = "1";
+pragma Ytflow.ControllerCpuLimit = "1.0";
+pragma Ytflow.ControllerMemoryLimit = "1G";
+
+pragma Ytflow.WorkerCount = "1";
+pragma Ytflow.WorkerCpuLimit = "1.0";
+pragma Ytflow.WorkerMemoryLimit = "1G";
+
+insert into `$SCENARIO_ROOT/output_queue`
+select
+    HOP_START() as window_start,
+    HOP_END() as window_end,
+    key,
+    sum(value) as sum_values,
+    sum_if(value, value > 10) as sum_if_values,
+    count(*) as count_values,
+    count_if(value > 10) as count_if_values
+from `$SCENARIO_ROOT/input_queue`
+group by
+    key,
+    HOP(Datetime::FromSeconds(Unwrap(ts)), "PT5S", "PT5S", "PT10S");
