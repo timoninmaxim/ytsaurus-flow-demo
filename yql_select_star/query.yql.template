@@ -1,0 +1,27 @@
+use ytdemo;
+
+pragma Engine = "ytflow";
+
+pragma Ytflow.Cluster = "ytdemo";
+pragma Ytflow.PipelinePath = "$PIPELINE_PATH";
+
+pragma Ytflow.YtConsumerPath = "$SCENARIO_ROOT/main_consumer";
+pragma Ytflow.YtProducerPath = "$SCENARIO_ROOT/main_producer";
+
+pragma Ytflow.Pool = "$YT_POOL";
+
+pragma Ytflow.ControllerRpcPort = "27110";
+pragma Ytflow.ControllerMonitoringPort = "27111";
+pragma Ytflow.WorkerRpcPort = "27112";
+pragma Ytflow.WorkerMonitoringPort = "27113";
+
+pragma Ytflow.ControllerCount = "1";
+pragma Ytflow.ControllerCpuLimit = "1.0";
+pragma Ytflow.ControllerMemoryLimit = "1G";
+
+pragma Ytflow.WorkerCount = "1";
+pragma Ytflow.WorkerCpuLimit = "1.0";
+pragma Ytflow.WorkerMemoryLimit = "1G";
+
+insert into `$SCENARIO_ROOT/output_queue`
+select * from `$SCENARIO_ROOT/input_queue`;
