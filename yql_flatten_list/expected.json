@@ -1,0 +1,6 @@
+{"value": 1, "label": "original", "condition": false}
+{"value": 1, "label": "double", "condition": false}
+{"value": 10, "label": "original", "condition": false}
+{"value": 100, "label": "double", "condition": false}
+{"value": 100, "label": "original", "condition": true}
+{"value": 10000, "label": "double", "condition": true}
