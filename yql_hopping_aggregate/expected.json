@@ -1,0 +1,5 @@
+{"window_start": 110000000, "window_end": 115000000, "key": "foo", "sum_values": 1, "sum_if_values": null, "count_values": 1, "count_if_values": 0}
+{"window_start": 115000000, "window_end": 120000000, "key": "foo", "sum_values": 10, "sum_if_values": null, "count_values": 1, "count_if_values": 0}
+{"window_start": 115000000, "window_end": 120000000, "key": "bar", "sum_values": 11, "sum_if_values": null, "count_values": 2, "count_if_values": 0}
+{"window_start": 125000000, "window_end": 130000000, "key": "bar", "sum_values": 100, "sum_if_values": 100, "count_values": 1, "count_if_values": 1}
+{"window_start": 120000000, "window_end": 125000000, "key": "baz", "sum_values": 1, "sum_if_values": null, "count_values": 1, "count_if_values": 0}
