@@ -1,0 +1,45 @@
+use ytdemo;
+
+pragma Engine = "ytflow";
+
+pragma Ytflow.Cluster = "ytdemo";
+pragma Ytflow.PipelinePath = "$PIPELINE_PATH";
+
+pragma Ytflow.YtConsumerPath = "$SCENARIO_ROOT/main_consumer";
+pragma Ytflow.YtProducerPath = "$SCENARIO_ROOT/main_producer";
+
+pragma Ytflow.Pool = "$YT_POOL";
+
+pragma Ytflow.ControllerRpcPort = "27170";
+pragma Ytflow.ControllerMonitoringPort = "27171";
+pragma Ytflow.WorkerRpcPort = "27172";
+pragma Ytflow.WorkerMonitoringPort = "27173";
+
+pragma Ytflow.ControllerCount = "1";
+pragma Ytflow.ControllerCpuLimit = "1.0";
+pragma Ytflow.ControllerMemoryLimit = "1G";
+
+pragma Ytflow.WorkerCount = "1";
+pragma Ytflow.WorkerCpuLimit = "1.0";
+pragma Ytflow.WorkerMemoryLimit = "1G";
+
+$lambda = ($row) -> {
+    $good_row_type = TypeOf($row);
+    $bad_row_type = Struct<'string_field':optional<string>>;
+    $variant_type = Variant<$good_row_type, $bad_row_type>;
+
+    $val = $row.int64_field;
+    return If(
+        $val == 10,
+        Variant($row, "0", $variant_type),
+        Variant(<|string_field:cast($val as optional<string>)|>, "1", $variant_type)
+    );
+};
+
+$good_stream, $bad_stream = process `$SCENARIO_ROOT/input_queue` using $lambda(TableRow());
+
+insert into `$SCENARIO_ROOT/good_queue`
+select * from $good_stream;
+
+insert into `$SCENARIO_ROOT/bad_queue`
+select * from $bad_stream;
