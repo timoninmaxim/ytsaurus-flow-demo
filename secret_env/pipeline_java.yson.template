@@ -70,6 +70,7 @@
                 "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
                 "parameters" = {
                     "main_class" = "tech.ytsaurus.flow.demo.secretenv.SecretEnvMain";
+                    "jdk_bin_path" = "/opt/java/openjdk/bin/java";
                 };
                 "dependencies" = {};
             };
