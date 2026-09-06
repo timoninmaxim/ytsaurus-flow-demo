@@ -108,6 +108,7 @@
                 "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
                 "parameters" = {
                     "main_class" = "tech.ytsaurus.flow.demo.statejoiner.StateJoinerMain";
+                    "jdk_bin_path" = "/opt/java/openjdk/bin/java";
                 };
                 "dependencies" = {};
             };
