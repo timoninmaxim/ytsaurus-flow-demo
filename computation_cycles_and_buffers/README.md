@@ -281,10 +281,10 @@ registers `CyclePassthrough` four times under four computation ids, the Java cou
 registering `TCyclePassthroughFunction` four times. Everything runs under its own root
 `$YT_DEV_ROOT/computation_cycles_java`.
 
-The plumbing is `word_count_sync/companion_java`'s, unchanged: one entry point for the runner and
-the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the composite Gradle
-build substituting the unpublished SDK with a sibling ytsaurus checkout, the `collectRuntime` jar
-directory the runner ships from `java.library.path`, `TJavaCompanionManager` with only
+The plumbing is `word_count_sync/companion_java`'s with one difference: the Flow Java SDK comes
+from Maven instead of a sibling ytsaurus checkout. The rest is unchanged: one entry point for the
+runner and the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the
+`collectRuntime` jar directory the runner ships from `java.library.path`, `TJavaCompanionManager` with only
 `main_class` set, `port_count = 3`, and — this cluster having no porto layers — the
 `eclipse-temurin:17-jre` docker image plus the `YT_FLOW_JDK_LAYERS='[]'` /
 `YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` overrides in `run.sh`.
@@ -311,9 +311,13 @@ Adaptations against the C++ variant, stated explicitly — the asserts are uncha
   `optional<i64>.value_or(0)`. `testReducerToleratesNullCount` pins that shape offline.
 - **A missing passthrough rule throws `IllegalStateException`**, the port of the C++ variant's
   throw — with the same retried-forever caveat.
-- The Flow Java SDK is not on Maven Central yet, so the Gradle build composite-includes a
-  sibling source checkout of `github.com/ytsaurus/ytsaurus` (clone it next to this repo, or
-  repoint with `-PytsaurusRoot=`) — the Java equivalent of the Go variant's `go.mod` `replace`.
+- **The SDK and the server come from a Flow release, not from a source checkout.** The Gradle
+  build resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven Central, test
+  releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner ships is taken out of
+  the release image of the same version, `ghcr.io/ytsaurus/flow:<version>` (`docker create` +
+  `docker cp`, or `./fetch_image_file.py` from the repo root when there is no docker), and passed
+  in `FLOW_BIN`.
 
 The cycle logic is proven offline first: `ComputationCyclesTest` drives all six computations
 through the SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the
@@ -326,7 +330,9 @@ needed. The trimmed spec omits the live `sleep_per_message` values, which only p
 Run, from the repo root:
 
 ```bash
-computation_cycles_and_buffers/companion_java/build.sh   # gradle test + collectRuntime (JDK 17+)
+./fetch_image_file.py ghcr.io/ytsaurus/flow-nightly:dev-0.1.0 /usr/bin/flow_server ~/flow_server  # or docker cp
+export FLOW_BIN=~/flow_server
+computation_cycles_and_buffers/companion_java/build.sh   # gradle test + collectRuntime (JDK 17+, SDK 0.1.0-SNAPSHOT from Maven)
 python3 computation_cycles_and_buffers/companion_java/yt_sync.py  # once: objects under computation_cycles_java/
 
 python3 -c 'import json, sys
