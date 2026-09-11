@@ -5,3 +5,8 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+pipeline_java.yson
+.gradle/
+swift_map_batching/companion_java/build/
+swift_map_batching/companion_java/logs/
+swift_map_batching/logs/
