@@ -127,16 +127,29 @@ null value against the key.
 
 Each variant is a separate pipeline in a separate Cypress subtree
 (`$YT_DEV_ROOT/sorted_dynamic_table/<variant>/`), because they differ in the *static* part of the
-spec — and `aggregate` also needs a different output-table schema. Run them one at a time:
+spec — and `aggregate` also needs a different output-table schema. Run them one at a time.
 
-From the repo root:
+The scenario runs on a Flow release, nothing is built from source. Two artifacts of the same
+release version are needed: the docker image the vanilla jobs run in, named in `FLOW_IMAGE`, and
+the `flow_server` the runner ships into them, taken out of that same image and named in
+`FLOW_BIN`. A release is `ghcr.io/ytsaurus/flow:<version>`, a test release
+`ghcr.io/ytsaurus/flow-nightly:dev-<version>`:
+
+```bash
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow:0.1.0
+docker create --name flow "$FLOW_IMAGE" && docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+```
+
+The image ships the server already stripped, so nothing else has to be done to it — the runner
+uploads that exact file to the cluster's file cache on every deploy.
+
+Then, from the repo root:
 
 ```bash
 python3 sorted_dynamic_table/yt_sync.py swift      # once per variant: pipeline node, queue, table
 python3 sorted_dynamic_table/prepare_data.py swift # 6994 queue rows over 1000 keys
-
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
-    ./run.sh sorted_dynamic_table swift
+./run.sh sorted_dynamic_table swift
 ```
 
 and the same three commands with `delete` or `aggregate` in place of `swift`. For `delete`,
@@ -144,20 +157,17 @@ and the same three commands with `delete` or `aggregate` in place of `swift`. Fo
 one key more than the stream carries, so the survivor proves the sink deleted the keys it saw and
 not the table.
 
-Set `FLOW_BIN` to the **stripped** server. The runner uploads that exact file on every deploy, and
-an unstripped build is gigabytes — the repo README's default path points at the build output, not
-at a stripped copy.
-
-`run.sh` returns on its own when the pipeline completes — the source is finite; budget one to two
-and a half minutes. Its first seconds look alarming and are not: 27-45
-`E ... Failed to update pipeline` from the runner (it polls until the controller publishes
-`leader_controller_address`), one `E ... Failed to confirm leader_controller_address` and three
-`W ... Component became broken` (`/build_cache`, `/collect_feedback`, `/update_metrics`) from the
-controller, all recovered within five seconds, then `W ... Some computations has partial traverse
-coverage (Computations: [reader])` four times at 5 s intervals from the moment the pipeline reaches
-`working`, silent for the last ~20 s. One more reading aid: the runner's own lines carry the host's
-local time while the controller's lines come from the vanilla job and carry UTC, so a three-hour
-jump in the middle of the stream is the timezone, not a stall.
+`run.sh` returns on its own when the pipeline completes — the source is finite; budget about a
+minute, plus the image pull the first time a node runs this release. Its first seconds look
+alarming and are not: 6-8 `E ... Failed to update pipeline` from the runner (it polls until the
+controller publishes `leader_controller_address`), sometimes one
+`W ... Failed to confirm leader_controller_address`, and three `W ... Component became broken`
+(`/build_cache`, `/collect_feedback`, `/update_metrics`) from the controller, all recovered within
+five seconds, then `W ... Some computations has partial traverse coverage (Computations: [reader])`
+five times at 5 s intervals from the moment the pipeline reaches `working`, silent for the last
+~20 s. One more reading aid: the runner's own lines carry the host's local time while the
+controller's lines come from the vanilla job and carry UTC, so a three-hour jump in the middle of
+the stream is the timezone, not a stall.
 
 Then check the output, and finally `./stop.sh sorted_dynamic_table/<variant>` to abort the vanilla
 operation (the pipeline is already `completed`, a final state, so there is nothing to stop).
@@ -193,10 +203,11 @@ yt select-rows "* from [$T/pipeline/states] limit 1" --format json
 
 ## Observed output
 
-Recorded against the server build `run.sh` prints on the way in:
+Measured on `ghcr.io/ytsaurus/flow-nightly:dev-0.1.0`, whose `flow_server` — the one `run.sh`
+prints on the way in — reports:
 
 ```
-flow_server: 26.2.0-local-os~5c69dd1804e43fe5
+flow_server: 26.3.0-local-os~bc0fc6f44e870a8f
 ```
 
 Each of the three runs ended with, and exited 0 on (cluster URL and Cypress root elided):
@@ -248,18 +259,23 @@ the last one instead of summed.
 `states` came back empty for all three, upstream's secondary assertion: none of these variants
 keeps per-key state in the pipeline, the target table is the only state there is.
 
-Timings, one worker, the stock binary already in the cluster's file cache (a first deploy of a
-binary the cluster has not seen adds its ~200 MB upload on top):
+Timings in UTC, one worker, the stock binary already in the cluster's file cache and the release
+image already on the node (a first deploy of either adds its upload or its pull on top):
 
 | variant | runner start | vanilla operation | `working` | `completed` |
 |---------|--------------|-------------------|-----------|-------------|
-| `swift` | 12:01:11 | 12:01:12 | 12:01:45 | 12:02:23 |
-| `delete` | 12:03:30 | 12:03:32 | 12:04:04 | 12:04:42 |
-| `aggregate` | 12:05:10 | 12:05:12 | 12:06:49 | 12:07:27 |
+| `swift` | 14:52:04 | 14:52:05 | 14:57:02 | 14:57:46 |
+| `delete` | 15:05:59 | 15:06:01 | 15:06:08 | 15:06:57 |
+| `aggregate` | 15:08:49 | 15:08:51 | 15:08:58 | 15:09:53 |
 
-The pipeline itself takes **38 s in all three** — the same 6994 rows, the same graph, and the
-sink's mode makes no measurable difference. What varies is how long YT takes to start the jobs:
-33 s, 32 s, then 97 s for the third run.
+The pipeline itself takes **44 to 55 s in all three** — the same 6994 rows, the same graph, and the
+sink's mode makes no measurable difference. What varies is how long it takes to get to `working`:
+7 s for `delete` and `aggregate`, and 4 min 57 s for `swift`, which is not the scenario. That run
+hit a wedged tablet node on the demo cluster — the controller logged
+`W ... Failed to publish leader_controller to flow_control table` 57 times while the node it
+happened to serve `flow_control` from refused writes, then published and ran normally. A pipeline
+that sits in `working` (or never gets there) with that line repeating is a storage-side problem,
+not a spec problem.
 
 ## Rerunning
 
@@ -288,8 +304,7 @@ yt unregister-queue-consumer "$YT_DEV_ROOT/sorted_dynamic_table/$V/input_queue" 
                              "$YT_DEV_ROOT/sorted_dynamic_table/$V/consumer"
 yt remove -r "$YT_DEV_ROOT/sorted_dynamic_table/$V"
 python3 sorted_dynamic_table/yt_sync.py "$V" && python3 sorted_dynamic_table/prepare_data.py "$V"
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped \
-    ./run.sh sorted_dynamic_table "$V"
+./run.sh sorted_dynamic_table "$V"
 ```
 
 Recreating the tables invalidates the proxies' mount cache, so the first `insert-rows` or
