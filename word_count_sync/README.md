@@ -373,13 +373,15 @@ behind the `word_counts` table and the skipped-words stream written by the sync 
 same epoch transaction — and the choreography are unchanged; everything runs under its own root
 `$YT_DEV_ROOT/word_count_sync_java`.
 
-The plumbing is `key_visitor/companion_java`'s, unchanged: one entry point for the runner and the
-companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the composite Gradle build
-substituting the unpublished SDK with a sibling ytsaurus checkout, the `collectRuntime` jar
-directory the runner ships from `java.library.path`, `TJavaCompanionManager` with only
-`main_class` set, `port_count = 3`, and — this cluster having no porto layers — the
-`eclipse-temurin:17-jre` docker image plus the `YT_FLOW_JDK_LAYERS='[]'` /
-`YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` overrides in `run.sh`.
+The plumbing is `key_visitor/companion_java`'s with one difference: the Flow Java SDK comes from
+Maven instead of a sibling ytsaurus checkout. The rest is unchanged: one entry point for the
+runner and the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the
+`collectRuntime` jar directory the runner ships from `java.library.path`, `TJavaCompanionManager`
+with only `main_class` set, `port_count = 3`, and — this cluster having no porto layers — a docker
+image carrying the JDK. That image is the release's own `flow-java`, which is the `flow` image
+plus a JRE at `/opt/java/openjdk`: one image holds both the `flow_server` the jobs run and the
+`java` the companion is launched with, so the resource's `jdk_bin_path` points inside it and no
+`YT_FLOW_JDK_*` overrides are needed.
 
 Adaptations against the C++ variant, stated explicitly — the asserts are unchanged:
 
@@ -399,6 +401,17 @@ Adaptations against the C++ variant, stated explicitly — the asserts are uncha
 - **Only `set` persists the state.** As in Python and Go, the counter writes back a fresh
   `PayloadBuilder(row.getSchema())` row with only `count` set; the state manager fills the key
   columns from the grouping key.
+- **The SDK and the server come from a Flow release, not from a source checkout.** The Gradle
+  build resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven Central, test
+  releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner ships is taken out of
+  the release image of the same version and passed in `FLOW_BIN`; the vanilla jobs run in
+  `ghcr.io/ytsaurus/flow-java:<version>`, named in `FLOW_IMAGE` (a test release is
+  `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`).
+- **`StateAccessor.get()` is nullable, not `Optional`-valued.** It returns the stored row or
+  `null`, so the offline test checks for `null`; `getOrDefault()` — what the counter itself uses —
+  is unaffected. An older SDK returned `Optional<Payload>`; building against a release is what
+  pins which one you get.
 
 The word logic is proven offline first: `WordCountSyncTest` drives both computations through the
 SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the pipeline spec —
@@ -409,7 +422,11 @@ end-to-end pipe of the scenario's two lines asserting exactly the two tables —
 Run, from the repo root:
 
 ```bash
-word_count_sync/companion_java/build.sh      # gradle test + collectRuntime (JDK 17+)
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0
+docker create --name flow "$FLOW_IMAGE" && docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+
+word_count_sync/companion_java/build.sh      # gradle test + collectRuntime (JDK 17+, SDK from Maven)
 python3 word_count_sync/companion_java/yt_sync.py   # once: objects under word_count_sync_java/
 
 printf '%s\n' '{"text": "hello to a world", "$$tablet_index": 0}' \
@@ -424,13 +441,15 @@ yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_java/skipped_wor
 ./stop.sh word_count_sync_java               # aborts the vanilla operation
 ```
 
-On this demo cluster, run the erasure-codec workaround described for the Go variant right after
-`yt_sync.py` — here it is needed only for the pipeline system tables (the user tables already
-come out with `erasure_codec = none`), and the same empty-table `unmounting` hang applies: use a
-plain async `yt unmount-table` and `--force` the tablets still `transient` after ~20 s.
+On this demo cluster, check the pipeline system tables after `yt_sync.py`: if any carries an
+`erasure_codec` / `hunk_erasure_codec` other than `none`, run the erasure-codec workaround
+described for the Go variant (fewer than six online data nodes cannot write an erasure chunk).
+A current `yt_sync_mini` bootstraps them with `none` already, so on the run below there was
+nothing to do.
 
-Recorded from the live run on the demo cluster, `flow_server` and the SDK built from ytsaurus
-flow-core commit `baaaeedbe3c` (heads/main):
+Recorded from the live run on the demo cluster, Flow release `0.1.0-SNAPSHOT`: the SDK from the
+Sonatype snapshot repository, `flow_server` and the job image from
+`ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0`:
 
 ```
 $ yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_java/pipeline"
@@ -448,9 +467,12 @@ $ yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_java/skipped_w
 ```
 
 Identical to the C++, Python and Go variants' output, and the two tables again prove the stop
-words were applied from the spec parameters. Timings: runner launched → `completed` in 82 s,
-with the usual one round of companion `Connection refused` while the JVM boots (~15 lines here —
-between the Go binary's zero and the Python bundle's minute).
+words were applied from the spec parameters. Timings: runner launched → `working` in 25 s →
+`completed` in 171 s, with the usual round of companion `Connection refused` while the JVM boots
+(three lines here). The earlier 82 s run of the same scenario is the floor: this one shared the
+cluster with three other pipelines, and one round of jobs died on
+`Not enough memory to serve "query" acquisition request` from the tablet node before retrying
+through — the engine healed it, but it cost about a minute.
 
 A second run re-created the scenario and fed **2000 lines / 16000 words** (a seeded random draw
 over eight countable words, seven short ones and the two stop words, inserted in four

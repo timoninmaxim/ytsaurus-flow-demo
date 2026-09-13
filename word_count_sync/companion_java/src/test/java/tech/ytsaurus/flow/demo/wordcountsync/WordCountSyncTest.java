@@ -109,9 +109,8 @@ public class WordCountSyncTest {
     }
 
     private Long countOf(TestDoProcessResponse response, String word) {
-        return response.allStates().get(WordCount.COUNT_STATE, keyOf(word)).get()
-                .map(payload -> payload.get("count", Long.class))
-                .orElse(null);
+        Payload row = response.allStates().get(WordCount.COUNT_STATE, keyOf(word)).get();
+        return row == null ? null : row.get("count", Long.class);
     }
 
     @Test
