@@ -321,9 +321,6 @@ Adaptations against the C++ variant, stated explicitly — the asserts are uncha
   `docker cp`, or `./fetch_image_file.py` from the repo root when there is no docker), and passed
   in `FLOW_BIN`. The vanilla jobs run in `ghcr.io/ytsaurus/flow-java:<version>`, named in
   `FLOW_IMAGE`; a test release is `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`.
-- **The SDK's state API is not `Optional`-valued.** `StateAccessor.get()` returns the state row
-  or `null`, so the offline test checks for `null` rather than mapping an `Optional`. An older
-  SDK returned `Optional<Payload>`; building against a release is what pins which one you get.
 
 The cycle logic is proven offline first: `ComputationCyclesTest` drives all six computations
 through the SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the
