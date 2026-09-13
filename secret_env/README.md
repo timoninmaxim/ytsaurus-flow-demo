@@ -171,28 +171,37 @@ The moving parts, alongside the other variants:
   `YT_FLOW_MODE`.
 - `pipeline_java.yson.template` — the Python variant's topology (native finite `TQueueSource`
   reader → `TTransformCompanionComputation` → `TSyncQueueSink`) with the Java companion resource:
-  `TJavaCompanionManager` naming only `main_class` (the runner completes the classpath and the
-  JDK binary path), the worker running in a plain `eclipse-temurin:17-jre` docker image instead
-  of the SDK's default JDK porto layers (this cluster has none — hence the two `YT_FLOW_*`
-  overrides in `companion_java/run.sh`), and `port_count = 3` (worker RPC + monitoring + the
-  companion gRPC port). The `secret_env = ["YT_MY_SECRET"]` line is unchanged: the
-  launcher→vault→job mechanics are engine surface the Java runner shape does not touch.
+  `TJavaCompanionManager` naming `main_class` and `jdk_bin_path` (the runner completes the
+  classpath), the vanilla tasks running in the release's `flow-java` docker image instead of the
+  SDK's default JDK porto layers (this cluster has none), and `port_count = 3` (worker RPC +
+  monitoring + the companion gRPC port). The `secret_env = ["YT_MY_SECRET"]` line is unchanged:
+  the launcher→vault→job mechanics are engine surface the Java runner shape does not touch.
 - `companion_java/src/test/java/.../SecretEnvTest.java` — the checker offline through
   `TestComputationHarness`, pinning the reported columns for the correct, wrong and absent
   environment shapes (the injected-map equivalent of Go's `t.Setenv`; no cluster).
 - `companion_java/yt_sync.py` — bootstrap under its own root `$YT_DEV_ROOT/secret_env_java`.
-- The Flow Java SDK is not published to Maven Central yet, so `settings.gradle.kts`
-  composite-includes a sibling source checkout of `github.com/ytsaurus/ytsaurus` and substitutes
-  the `tech.ytsaurus:flow-*` coordinates with its Gradle subprojects — the Java equivalent of
-  the Go variant's `go.mod` `replace`. `./run.sh` does not fit this route either (the runner is
-  the JVM entry point, not `$FLOW_BIN`), so `companion_java/run.sh` renders the template and
-  launches it directly.
+- **The SDK and the server come from a Flow release, not from a source checkout.**
+  `build.gradle.kts` resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven
+  Central, test releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner spawns is taken out of
+  the release image of the same version, `ghcr.io/ytsaurus/flow-java:<version>` (`docker create` +
+  `docker cp`, or `./fetch_image_file.py` from the repo root when there is no docker), and passed
+  in `FLOW_BIN`; the vanilla tasks run in that same image, named in `FLOW_IMAGE`. It is the `flow`
+  image plus a JRE at `/opt/java/openjdk`, so one image holds both the `flow_server` the jobs run
+  and the `java` the companion is launched with, and the resource's `jdk_bin_path` points inside
+  it. A test release is `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`. `./run.sh` does not
+  fit this route either (the runner is the JVM entry point, not `$FLOW_BIN`), so
+  `companion_java/run.sh` renders the template and launches it directly.
 
 ### Run
 
 ```bash
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0
+./fetch_image_file.py "$FLOW_IMAGE" /usr/bin/flow_server ~/flow_server  # or docker create + docker cp
+export FLOW_BIN=~/flow_server
+
 cd secret_env/companion_java
-./build.sh                      # gradle test + collectRuntime (JDK 17+, checkout next door)
+./build.sh                      # gradle test + collectRuntime (JDK 17+, SDK 0.1.0-SNAPSHOT from Maven)
 python3 yt_sync.py              # once: objects under secret_env_java/
 
 echo '{"key"="pos-1"};{"key"="pos-2"};{"key"="pos-3"}' | \
@@ -206,20 +215,19 @@ yt select-rows "key, secret, vault_carries_name from [$YT_DEV_ROOT/secret_env_ja
 cd ../.. && ./stop.sh secret_env_java   # aborts the vanilla operation ("completed" is final)
 ```
 
-On this demo cluster (degraded data nodes), run the erasure-codec workaround right after
-`yt_sync.py` and before deploying: on every table under `$YT_DEV_ROOT/secret_env_java` still
-carrying an erasure codec (with the current bootstrap that is only the pipeline system tables),
-set `@erasure_codec = none` and `@hunk_erasure_codec = none` and remount (`yt unmount-table
---force` if one wedges in `unmounting`). Without it table writes stall hunting for erasure part
-replicas.
+The erasure-codec workaround earlier runs needed on this demo cluster (degraded data nodes) is
+gone: the published `ytsaurus-flow-yt-sync-mini` now bootstraps the pipeline's system tables with
+`erasure_codec = none`, which a cluster with three online data nodes can write.
 
-Recorded from the live run on the demo cluster, `flow_server` and the SDK built from the same
-checkout as the state_joiner Java variant (flow-core commit `baaaeedbe3c`, heads/main): vanilla
-operation started 02:27:04 → pipeline `working` by 02:27:48 → `completed` 02:28:20, 76 s from
-operation start; the persisted `vanilla/current_spec` again keeps only the
+Recorded from the live run on the demo cluster against the Flow release `0.1.0-SNAPSHOT` — jars
+from Maven, `flow_server` and the vanilla image from `ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0`
+(the runner logs the server's own `Flow core build info`, tag `flow-test/0.1.0`, commit
+`bc0fc6f4`): runner launched 17:54:22 → vanilla operation started 17:54:27 → `completed` 17:55:42,
+75 s from operation start with no failed job; the persisted `vanilla/current_spec` again keeps only the
 *name* (`secret_env = ['YT_MY_SECRET']`, `secure_vault = None`), and the stored pipeline spec
-shows what the Java runner injected (the `java_companion/*.jar` file entries — 65 jars, 39 MB —
-and the completed `TJavaCompanionManager` with `classpath` and `jdk_bin_path`):
+shows what the Java runner injected (the `java_companion/*.jar` file entries — 62 jars, 39 MB —
+and the completed `TJavaCompanionManager` with `classpath`, on top of the `jdk_bin_path` the
+template already named):
 
 ```
 $ yt flow get-pipeline-state "$YT_DEV_ROOT/secret_env_java/pipeline"
