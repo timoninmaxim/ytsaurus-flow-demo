@@ -3,8 +3,11 @@
 # entry point in runner mode, which enriches the spec (stream schemas, companion jars, the
 # TJavaCompanionManager classpath) and execs flow_server. Returns when the pipeline completes.
 #
-# Source your env file first (see the repo README). FLOW_BIN must point at a stripped
-# flow_server built from the same-era checkout.
+# Source your env file first (see the repo README). FLOW_BIN must point at the flow_server of
+# the Flow release the jars were built against, taken out of the release image:
+#   docker create --name flow ghcr.io/ytsaurus/flow-java:<version>
+#   docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+# FLOW_IMAGE names that same image for the vanilla tasks.
 #
 # JDK delivery is resolved from the pipeline config: the worker task's docker_image switches
 # the launch to docker mode (no porto layers, which do not exist on this cluster), and the
@@ -13,7 +16,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-FLOW_BIN=${FLOW_BIN:-"$HOME/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped"}
+FLOW_BIN=${FLOW_BIN:?set FLOW_BIN to the flow_server taken out of the Flow release image}
 LIBS="companion_java/build/companion-libs"
 
 python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \

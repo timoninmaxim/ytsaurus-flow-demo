@@ -6,6 +6,7 @@ import tech.ytsaurus.flow.computation.OutputCollector;
 import tech.ytsaurus.flow.context.RuntimeContext;
 import tech.ytsaurus.flow.function.BatchFunction;
 import tech.ytsaurus.flow.row.ExtendedMessage;
+import tech.ytsaurus.flow.row.Payload;
 import tech.ytsaurus.flow.state.JoinedExternalStateDescriptor;
 import tech.ytsaurus.flow.state.ReadOnlyExternalStateAccessor;
 import tech.ytsaurus.flow.state.StateDescriptors;
@@ -33,13 +34,13 @@ public class JoinerFunction implements BatchFunction {
         for (ExtendedMessage message : messages) {
             ReadOnlyExternalStateAccessor state = ctx.getState(TOTAL_STATE, message);
             // A key with no row in the joined table arrives as an all-null state (the worker-side
-            // preload keeps missing rows), a key the batch carried nothing for as an absent one.
+            // preload keeps missing rows), a key the batch carried nothing for as a null state —
+            // the accessor's get() returns the state row or null, it is not Optional-valued.
             // Report either as -1 instead of throwing: an exception thrown in a companion is
             // retried forever, whereas a sentinel in the output table makes a broken join visible
             // at a glance.
-            Long total = state.get()
-                    .map(payload -> payload.get("Total", Long.class))
-                    .orElse(null);
+            Payload row = state.get();
+            Long total = row == null ? null : row.get("Total", Long.class);
 
             output.addMessage(ctx.createMessageBuilder("results")
                     .set("UserId", message.get("UserId", String.class))

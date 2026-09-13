@@ -326,9 +326,11 @@ the reader stays the stock C++ source computation, exactly as in the C++ variant
 the external-state restructuring and the assertion are unchanged: `StateJoinerMain` registers both
 functions, `pipeline_java.yson.template` is the same graph under its own root
 `$YT_DEV_ROOT/state_joiner_java`, and the delivery is `key_visitor/companion_java`'s runner-mode
-flow unchanged — the same entry point in runner mode ships the 65 collected jars, points the
-`TJavaCompanionManager` resource at `main_class`, and execs `flow_server`; the worker task runs in
-a plain `eclipse-temurin:17-jre` docker image with `port_count = 3`.
+flow unchanged — the same entry point in runner mode ships the collected jars, points the
+`TJavaCompanionManager` resource at `main_class`, and execs `flow_server`; the vanilla tasks run
+in the release's own `flow-java` docker image (the `flow` image plus a JRE at
+`/opt/java/openjdk`), so one image holds both the `flow_server` the jobs run and the `java` the
+companion is launched with, and the resource's `jdk_bin_path` points inside it.
 
 What this variant demonstrates on top of the C++ one: **`external_state_joiners` is fully usable
 from Java.** The worker-side host ships the joined states with each batch, and the SDK surfaces
@@ -354,23 +356,39 @@ Deliberate differences against the C++ companion:
 - **`processing_function` is omitted.** The Java SDK dispatches by `computation_id`
   (`registerComputation(... .setComputationId("accumulator") ...)`), so the spec does not name
   the functions.
-- **The missing-join sentinel handles both miss shapes with one expression.** The C++ joiner
+- **The missing-join sentinel handles both miss shapes with one check.** The C++ joiner
   distinguishes an uninitialized accessor from an all-null row; in Java both collapse into
-  `state.get()` being empty or the `Total` column reading `null`, so
-  `state.get().map(p -> p.get("Total", Long.class)).orElse(null)` covers the un-shipped-state
-  case and the reachable miss — no row in `user_totals`, shipped as an all-null payload — alike,
-  reported as `Total = -1` for the same reason (an exception in a companion is retried forever).
-  No `-1` appears in the run below.
+  `state.get()` returning `null` or the `Total` column reading `null`, so one null check covers
+  the un-shipped-state case and the reachable miss — no row in `user_totals`, shipped as an
+  all-null payload — alike, reported as `Total = -1` for the same reason (an exception in a
+  companion is retried forever). No `-1` appears in the run below.
 - **The join is unit-tested offline.** `StateJoinerTest` drives both computations through
   `flow-test-utils`' `TestComputationHarness`, seeding the joined state with
   `TestDoProcessRequest.setState(JoinedExternalStateDescriptor, key, payload)` — the harness runs
   the real gRPC request mappers, so the joined-state path in the test is the wire path. The
   all-null-row miss and the absent-state miss are both pinned to `-1` there.
+- **The SDK and the server come from a Flow release, not from a source checkout.** The Gradle
+  build resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven Central, test
+  releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner ships is taken out of
+  the release image of the same version and passed in `FLOW_BIN`; the vanilla jobs run in
+  `ghcr.io/ytsaurus/flow-java:<version>`, named in `FLOW_IMAGE`. A test release is
+  `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`.
+- **The SDK's state API is not `Optional`-valued.** `StateAccessor.get()` returns the state row
+  or `null` (with `getOrDefault()` for an all-null row of the state schema), so both the joiner
+  and the offline test check for `null` rather than mapping an `Optional`. An older SDK returned
+  `Optional<Payload>`; building against a release is what pins which one you get.
 
 Run, from the repo root:
 
 ```bash
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0
+docker create --name flow "$FLOW_IMAGE"                      # take the server out of the image
+docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+
 state_joiner/companion_java/build.sh            # gradle: unit tests + build/companion-libs
+                                                # (JDK 17+, SDK 0.1.0-SNAPSHOT from Maven)
 python3 state_joiner/companion_java/yt_sync.py  # once: objects under state_joiner_java/
 
 python3 -c 'import json, sys
@@ -378,7 +396,7 @@ for i, amount in enumerate([10, 20, 30, 40]):
     sys.stdout.write(json.dumps({"UserId": "user-%d" % i, "Amount": amount, "$$tablet_index": 0}) + "\n")' \
   | yt insert-rows --format json "$YT_DEV_ROOT/state_joiner_java/input_queue"
 
-state_joiner/companion_java/run.sh              # stock binary; returns when the pipeline completes
+state_joiner/companion_java/run.sh              # release binary; returns when the pipeline completes
 
 yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_java/pipeline"
 yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/output_table]" --format json
@@ -386,24 +404,26 @@ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/user_totals]"
 ./stop.sh state_joiner_java                     # aborts the vanilla operation
 ```
 
-On this demo cluster, run the erasure-codec workaround described in the Python variant's section
-right after `yt_sync.py` — here, as in `word_count_sync`'s Java run, only the pipeline system
-tables needed it (eight tables came out `reed_solomon_3_3`; the user tables were already `none`),
-and the empty tables sat in `mounted` refusing a plain unmount for ~20 s before
-`yt unmount-table --force` cleared them.
+No erasure-codec workaround is needed any more: `yt_sync_mini` strips erasure on bootstrap, so
+on this demo cluster (4/9 data nodes online) every table — the three user tables and all fourteen
+pipeline system tables — came out `erasure_codec = none`, which needs three data nodes to write.
+Earlier runs had to set that by hand on eight system tables; see the Python variant's section for
+the manual form, in case a cluster's `yt_sync` preset puts erasure back.
 
-Recorded from the live run on the demo cluster, `flow_server` and the SDK built from ytsaurus
-flow-core commit `baaaeedbe3c` (heads/main):
+Recorded from the live run on the demo cluster against the Flow release artifacts — the SDK
+`0.1.0-SNAPSHOT` from Maven and the `flow_server` out of
+`ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0`, which the runner reports as `flow_server_0.1.0`
+(flow core commit `bc0fc6f44e8`):
 
 ```
 $ yt flow get-pipeline-state "$YT_DEV_ROOT/state_joiner_java/pipeline"
 completed
 
 $ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/output_table]" --format json
+{"UserId":"user-3","Total":40}
 {"UserId":"user-2","Total":30}
 {"UserId":"user-0","Total":10}
 {"UserId":"user-1","Total":20}
-{"UserId":"user-3","Total":40}
 
 $ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/user_totals]" --format json
 {"UserId":"user-2","Total":30}
@@ -414,10 +434,17 @@ $ yt select-rows "UserId, Total from [$YT_DEV_ROOT/state_joiner_java/user_totals
 
 Identical to the C++ and Python variants' output: `(UserId, Total)` sorted is the input amounts,
 the two tables agree, no row is `-1`, and the pipeline's own `states` table is empty. Timings:
-runner launched 23:10:02 UTC → pipeline `working` 23:10:45 → all five jobs completed by 23:11:23
-→ `completed` 23:11:36, 94 s end to end with both the binary and the jars already in the
-cluster's file cache. The log profile was the shortest of the three variants: zero `E`-level
-lines and zero parseability errors, only the usual companion-startup noise (nine
-`GetCompanionInfo` connection retries while the companion binds its port, three
-`CompanionManager` resource warm-up worker errors, `partial traverse coverage` until the jobs
-run).
+runner launched 14:32:06 UTC → vanilla operation started 14:32:13 → pipeline `working` 14:33:29
+→ `completed` 14:37:14, 5 min 8 s end to end. The startup noise was the usual (38
+`Failed to update pipeline` client errors until the controller published itself, 14
+`GetCompanionInfo` connection retries while the companion binds its port, six
+`partial traverse coverage` warnings, zero parseability errors — the Java SDK dispatches by
+`computation_id`, so the spec names no `processing_function`).
+
+The three minutes over the earlier 94 s run were the cluster, not the release: between 14:34:11
+and 14:36:45 seventeen jobs (sixteen `accumulator`, one `reader`) failed with
+`Not enough memory to serve "query" acquisition request` from the RPC proxy, while one of the two
+tablet nodes was over its total memory limit. The engine retried them and the run still finished
+`completed` with the exact output — which is the guarantee being demonstrated, but it is worth
+recording that a memory-pressured cluster shows up as retried jobs and a longer wall time, not as
+a wrong answer.

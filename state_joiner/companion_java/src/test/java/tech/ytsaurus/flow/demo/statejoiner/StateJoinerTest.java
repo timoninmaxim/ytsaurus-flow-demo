@@ -111,9 +111,8 @@ public class StateJoinerTest {
     }
 
     private Long storedTotal(TestDoProcessResponse response, String userId) {
-        return response.allStates().get(AccumulatorFunction.TOTAL_STATE, keyOf(userId)).get()
-                .map(payload -> payload.get("Total", Long.class))
-                .orElse(null);
+        Payload row = response.allStates().get(AccumulatorFunction.TOTAL_STATE, keyOf(userId)).get();
+        return row == null ? null : row.get("Total", Long.class);
     }
 
     @Test
