@@ -129,3 +129,141 @@ YT_MY_SECRET did not reach the vanilla job as expected (length 5, secure vault c
 That message never prints the value, and its vault-key list separates the two links of the chain:
 the vault carried `YT_MY_SECRET`, so delivery into the job worked and only the value was wrong. An
 empty vault list would have meant the secret never reached the job at all.
+
+## Java companion variant
+
+The same subject once more, for the Java shape. The user code is Java
+(`tech.ytsaurus:flow-*`, the Flow Java SDK), and — as in the Go variant — the pipeline module is
+its own runner: the same `SecretEnvMain` is launched on the dev host to deploy and inside the
+worker job as the companion. The launcher-side wrinkle differs from Go's, though: the Java runner
+does not *exec* `flow_server`, it spawns it as a **child process**
+(`yt/java/flow/flow-runner/.../FlowLauncher.java`, `new ProcessBuilder(command)`), and a
+`ProcessBuilder` hands the child a full copy of the parent's environment unless told otherwise.
+The SDK itself never mentions `secret_env` — it does not need to: the secret exported in your
+shell rides the inherited environment into `flow_server`, and the usual chain takes over.
+
+**Verdict: the chain holds end to end, four hops deep.** In the engines' code:
+
+1. `FlowLauncher` spawns `flow_server` with the JVM's full environment (`ProcessBuilder`'s
+   default);
+2. `flow_server` (runner mode) validates the names declared in `secret_env` **up front** and
+   reads each from that inherited environment into the operation's secure vault
+   (`library/cpp/runner/vanilla_launcher.cpp`, ValidateSecretEnv;
+   `library/cpp/vanilla/spec.cpp`, InjectSecureVaultFromEnv);
+3. inside the job, YT delivers the vault as `YT_SECURE_VAULT` and Flow re-exports each entry as
+   a plain env var (`library/cpp/runner/init.cpp`, Initialize);
+4. the worker spawns the companion JVM with a full copy of its own environment
+   (`library/cpp/companion/java_process_manager.cpp`, copyEnv=true), so `System.getenv` in the
+   process function sees both the re-exported secret and the raw vault text.
+
+The moving parts, alongside the other variants:
+
+- `companion_java/src/main/java/.../SecretCheckerFunction.java` — the checker, a `RowFunction`
+  that *reports* like the Python and Go variants: for every input message it writes `secret`
+  (the value of `YT_MY_SECRET` in its own environment) and `vault_carries_name` (whether the
+  inherited `YT_SECURE_VAULT` text mentions the name; a substring probe, diagnostic only) into
+  the output queue. Verification matches the value from outside — it can only have come from the
+  companion JVM's environment. (The demo value lands in an output queue; report a hash instead
+  if your secret is real.) The environment is injectable (`UnaryOperator<String>`, defaulting to
+  `System::getenv`) because the JVM has no `setenv` for tests to use.
+- `companion_java/src/main/java/.../SecretEnvMain.java` — the shared entry point: registers the
+  `checker` computation and hands over to `FlowApplication.run`, which picks the role from
+  `YT_FLOW_MODE`.
+- `pipeline_java.yson.template` — the Python variant's topology (native finite `TQueueSource`
+  reader → `TTransformCompanionComputation` → `TSyncQueueSink`) with the Java companion resource:
+  `TJavaCompanionManager` naming `main_class` and `jdk_bin_path` (the runner completes the
+  classpath), the vanilla tasks running in the release's `flow-java` docker image instead of the
+  SDK's default JDK porto layers (this cluster has none), and `port_count = 3` (worker RPC +
+  monitoring + the companion gRPC port). The `secret_env = ["YT_MY_SECRET"]` line is unchanged:
+  the launcher→vault→job mechanics are engine surface the Java runner shape does not touch.
+- `companion_java/src/test/java/.../SecretEnvTest.java` — the checker offline through
+  `TestComputationHarness`, pinning the reported columns for the correct, wrong and absent
+  environment shapes (the injected-map equivalent of Go's `t.Setenv`; no cluster).
+- `companion_java/yt_sync.py` — bootstrap under its own root `$YT_DEV_ROOT/secret_env_java`.
+- **The SDK and the server come from a Flow release, not from a source checkout.**
+  `build.gradle.kts` resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven
+  Central, test releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner spawns is taken out of
+  the release image of the same version, `ghcr.io/ytsaurus/flow-java:<version>` (`docker create` +
+  `docker cp`, or `./fetch_image_file.py` from the repo root when there is no docker), and passed
+  in `FLOW_BIN`; the vanilla tasks run in that same image, named in `FLOW_IMAGE`. It is the `flow`
+  image plus a JRE at `/opt/java/openjdk`, so one image holds both the `flow_server` the jobs run
+  and the `java` the companion is launched with, and the resource's `jdk_bin_path` points inside
+  it. A test release is `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`. `./run.sh` does not
+  fit this route either (the runner is the JVM entry point, not `$FLOW_BIN`), so
+  `companion_java/run.sh` renders the template and launches it directly.
+
+### Run
+
+```bash
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0
+./fetch_image_file.py "$FLOW_IMAGE" /usr/bin/flow_server ~/flow_server  # or docker create + docker cp
+export FLOW_BIN=~/flow_server
+
+cd secret_env/companion_java
+./build.sh                      # gradle test + collectRuntime (JDK 17+, SDK 0.1.0-SNAPSHOT from Maven)
+python3 yt_sync.py              # once: objects under secret_env_java/
+
+echo '{"key"="pos-1"};{"key"="pos-2"};{"key"="pos-3"}' | \
+    yt insert-rows "$YT_DEV_ROOT/secret_env_java/input_queue" --format yson
+
+export YT_MY_SECRET=5
+./run.sh                        # spawns flow_server; returns when the pipeline completes
+
+yt flow get-pipeline-state "$YT_DEV_ROOT/secret_env_java/pipeline"
+yt select-rows "key, secret, vault_carries_name from [$YT_DEV_ROOT/secret_env_java/output_queue]" --format json
+cd ../.. && ./stop.sh secret_env_java   # aborts the vanilla operation ("completed" is final)
+```
+
+The erasure-codec workaround earlier runs needed on this demo cluster (degraded data nodes) is
+gone: the published `ytsaurus-flow-yt-sync-mini` now bootstraps the pipeline's system tables with
+`erasure_codec = none`, which a cluster with three online data nodes can write.
+
+Recorded from the live run on the demo cluster against the Flow release `0.1.0-SNAPSHOT` — jars
+from Maven, `flow_server` and the vanilla image from `ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0`
+(the runner logs the server's own `Flow core build info`, tag `flow-test/0.1.0`, commit
+`bc0fc6f4`): runner launched 17:54:22 → vanilla operation started 17:54:27 → `completed` 17:55:42,
+75 s from operation start with no failed job; the persisted `vanilla/current_spec` again keeps only the
+*name* (`secret_env = ['YT_MY_SECRET']`, `secure_vault = None`), and the stored pipeline spec
+shows what the Java runner injected (the `java_companion/*.jar` file entries — 62 jars, 39 MB —
+and the completed `TJavaCompanionManager` with `classpath`, on top of the `jdk_bin_path` the
+template already named):
+
+```
+$ yt flow get-pipeline-state "$YT_DEV_ROOT/secret_env_java/pipeline"
+completed
+
+$ yt select-rows "key, secret, vault_carries_name from [$YT_DEV_ROOT/secret_env_java/output_queue]" --format json
+{"key":"pos-1","secret":"5","vault_carries_name":"true"}
+{"key":"pos-2","secret":"5","vault_carries_name":"true"}
+{"key":"pos-3","secret":"5","vault_carries_name":"true"}
+```
+
+`secret = "5"` is the launcher's value read out of `System.getenv` inside the companion JVM —
+after riding the `ProcessBuilder` inheritance from the JVM runner into `flow_server` on the dev
+host.
+
+### The failure paths, checked as well
+
+With `YT_MY_SECRET` unset the JVM runner enriches the spec and spawns `flow_server` anyway (the
+Java SDK knows nothing of `secret_env`), and `flow_server` refuses **before uploading anything**
+— the name check runs up front, ahead of the vault assembly:
+
+```
+(NYT::TErrorException) Secret environment variable "YT_MY_SECRET" (declared in "secret_env") is not set
+```
+
+With a wrong value (`YT_MY_SECRET=wrong`) the pipeline still completes — this variant reports
+rather than asserts — and the observed column tracks the launcher verbatim, so verification
+fails on the value:
+
+```
+{"key":"neg-1","secret":"wrong","vault_carries_name":"true"}
+{"key":"neg-2","secret":"wrong","vault_carries_name":"true"}
+```
+
+(As in the other companion variants, that second run needs a fresh pipeline node: `completed` is
+final, so `yt remove --recursive .../secret_env_java/pipeline` — after the vanilla operation is
+aborted and the controller's ~5 s lock transaction expires — then re-run `yt_sync.py` and
+re-apply the erasure workaround; the queues and the consumer offsets survive, so only the newly
+inserted rows are read.)
