@@ -22,7 +22,19 @@ failure path is the upstream test this scenario does not port (see the last sect
 
 ## Run
 
-From the repo root:
+The scenario runs on a Flow release, nothing is built from source. Two artifacts of the same
+release version are needed: the docker image the vanilla jobs run in, named in `FLOW_IMAGE`, and
+the `flow_server` the runner ships into them, taken out of that same image and named in
+`FLOW_BIN`. A release is `ghcr.io/ytsaurus/flow:<version>`, a test release
+`ghcr.io/ytsaurus/flow-nightly:dev-<version>`:
+
+```bash
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow:0.1.0
+docker create --name flow "$FLOW_IMAGE" && docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+```
+
+Then, from the repo root:
 
 ```bash
 python3 shuffle/yt_sync.py       # once: pipeline node, input_queue (4 tablets) + consumer, output_queue
@@ -71,6 +83,9 @@ Then `./stop.sh shuffle` aborts the vanilla operation (the pipeline is already `
 final state, so there is nothing to stop).
 
 ## Observed output
+
+Measured on `ghcr.io/ytsaurus/flow-nightly:dev-0.1.0`, whose `flow_server` reports
+`26.3.0-local-os~bc0fc6f44e870a8f`.
 
 `run.sh` ends with, and exits 0 on (cluster URL and Cypress root elided):
 
