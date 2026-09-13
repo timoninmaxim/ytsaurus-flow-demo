@@ -178,13 +178,8 @@ the first assert.) Consequences, compared to the C++ variant's
   describe message carries one flat error — code 1, `status_code: 13`, with the failing gRPC
   call's attributes (`method: ProcessBatch`, `service: …CompanionService`). The stack trace
   stays in the worker job's stderr.
-- **An `Error` is reported exactly like an `Exception`.** This is where the release differs
-  from the pre-release checkout these examples were first written against: there an
-  `AssertionError` escaped the handler's `catch (Exception)` into grpc-java, which closed the
-  call as `UNKNOWN` (`status_code: 2`) with the useless generic description
-  `Application error processing RPC`, and the user text reached neither `describe-pipeline` nor
-  the controller log. The released server catches it, so a failing assertion is now as
-  diagnosable as a thrown exception.
+- **An `Error` is reported exactly like an `Exception`.** The server catches it, so a failing
+  assertion is as diagnosable as a thrown exception — same description shape, same attributes.
 - **Both shapes are retried identically and heal identically.** The worker retries either
   status; the injected `Error` row healed as designed — the controller log shows the same
   `AssertionError` text for the attempts of one injected row and then silence, the companion
