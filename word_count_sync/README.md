@@ -410,8 +410,7 @@ Adaptations against the C++ variant, stated explicitly — the asserts are uncha
   `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`).
 - **`StateAccessor.get()` is nullable, not `Optional`-valued.** It returns the stored row or
   `null`, so the offline test checks for `null`; `getOrDefault()` — what the counter itself uses —
-  is unaffected. An older SDK returned `Optional<Payload>`; building against a release is what
-  pins which one you get.
+  is unaffected.
 
 The word logic is proven offline first: `WordCountSyncTest` drives both computations through the
 SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the pipeline spec —
