@@ -16,13 +16,13 @@ The input is `input/2017-07-14T02:40:00` and `input/2020-09-13T12:26:40`, 1000 r
 holds exactly those 2000 rows, each carrying the event timestamp of the table it came from, and
 that the pipeline reaches `completed` on its own.
 
-That also makes it one of the few scenarios here with a plausible chance of running on a
-**published** `flow_server` artifact rather than a build from a recent checkout: every class and
-spec field it names is long-standing, and `connectors/static_table` is unconditionally linked into
-`bin/flow_server`. The companion scenarios in this repo cannot say that — they need a checkout at or
-after 2026-08-06 for the C++ companion classes. Not verified against a release artifact, and it is a
-claim about the *pipeline* only: this repo's deployment path pins the RPC proxy through
-`clients_cache` and may still want a newer runner.
+That also makes it the cheapest scenario here to run on **published release artifacts** rather than
+a build from a recent checkout: every class and spec field it names is long-standing, and
+`connectors/static_table` is unconditionally linked into `bin/flow_server`. Verified — the run
+recorded below used the `flow_server` and the docker image out of `flow-nightly:dev-0.1.0` and
+needed no source checkout, no user code and no change to the spec beyond naming the image. Note
+that this covers the *runner* too: the deployment path pins the RPC proxy through `clients_cache`
+and the released runner honours it.
 
 ## The subject: a finite source, and event time that comes from a table name
 
@@ -86,52 +86,63 @@ just noise to filter out (`data` is null on every one of them, and they carry
 
 ```
 {"flow_queue_meta":{"event_watermark":0,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_watermark":1499996400,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_watermark":1500000000,"pure_heartbeat":true}}
 {"flow_queue_meta":{"event_watermark":1600000000,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_watermark":1786433121,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_watermark":1789306370,"pure_heartbeat":true}}
 ```
 
-The two ends of that progression are the source's own watermark rule, `watermark_delay` (default one
-hour) behind whatever it is sure about: while it is handing out a table it reports that **table's**
-event timestamp minus the delay — `1499996400` is `1500000000 - 3600` — and once it has nothing left
-to hand out it reports **now** minus the delay, which is what the trailing values are (the last one
-here was written at 08:25:21 and reads 07:25:21). That idle jump is what lets downstream windows
-close, the same role Flink's source idleness plays.
+The **tail** of that progression is the source's own watermark rule, `watermark_delay` (default one
+hour) behind whatever it is sure about: once it has nothing left to hand out it reports **now**
+minus the delay — the last row here was written at 14:32:50 UTC and reads 13:32:50. That idle jump
+is what lets downstream windows close, the same role Flink's source idleness plays.
 
-The middle value does **not** follow that rule, and it is worth being explicit about it: while the
-second table was being handed out the rule predicts `1600000000 - 3600 = 1599996400`, and the run
-recorded `1600000000`. The rule is the *source's* watermark; what the sink writes is the watermark
-of its own input stream, one hop downstream. This scenario does not establish what that hop does, so
-treat the source rule as explaining the two ends of the progression and not the middle.
+The two **middle** values do not follow that rule, and it is worth being explicit about it: while a
+table is being handed out the rule predicts its event timestamp minus the delay, and this run
+recorded each table's timestamp unshifted (`1500000000`, `1600000000`). The rule is the *source's*
+watermark; what the sink writes is the watermark of its own input stream, one hop downstream. That
+hop is not established by this scenario and is not even stable between runs — an earlier run on a
+source-built server recorded `1499996400` for the first table where this one records `1500000000`,
+with the second table `1600000000` in both. Treat the source rule as explaining the idle tail only.
 
 ## Run
 
-From the repo root:
+The scenario runs on a Flow release, nothing is built from source. Two artifacts of the same
+release version are needed: the docker image the vanilla jobs run in, named in `FLOW_IMAGE`, and
+the `flow_server` the runner ships into them, taken out of that same image and named in
+`FLOW_BIN`. A release is `ghcr.io/ytsaurus/flow:<version>`, a test release
+`ghcr.io/ytsaurus/flow-nightly:dev-<version>`:
+
+```bash
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow:0.1.0
+docker create --name flow "$FLOW_IMAGE" && docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+```
+
+The image ships the server already stripped, so nothing else has to be done to it — the runner
+uploads that exact file to the cluster's file cache on every deploy.
+
+Then, from the repo root:
 
 ```bash
 python3 static_table/yt_sync.py        # once: pipeline node + output_queue
 python3 static_table/prepare_data.py   # the two input tables, 1000 rows each
-
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh static_table
+./run.sh static_table                  # deploys and streams the controller log until completion
 ```
 
 `prepare_data.py` must run **before** `run.sh` — the source is finite, so anything that is not in
 the directory by the time it drains is not part of the assertion. It takes an optional row count per
 table; the verification snippet below assumes the default 1000.
 
-Set `FLOW_BIN` to the **stripped** server. The runner uploads that exact file on every deploy, and
-an unstripped build is gigabytes — the repo README's default path points at the build output, not at
-a stripped copy.
-
-`run.sh` returns on its own when the pipeline completes — budget about two minutes. Its first
-seconds look alarming and are not: eight `E ... Failed to update pipeline` from the runner
-(`leader_controller_address` is not set until the controller publishes itself), one
-`E ... Failed to confirm leader_controller_address` and three `W ... Component became broken`
-(`/build_cache`, `/collect_feedback`, `/update_metrics`) from the controller, all recovered within
-five seconds. `W ... Some computations has partial traverse coverage (Computations: [reader])` then
-appears every 5 s **in bursts while a table is being taken up** — seven lines here, in two runs of
-08:23:57–08:24:12 and 08:24:42–08:24:52, one per table — and is silent in between and after. (In an
-endless pipeline the same warning never stops; that is the shape the other scenarios record.)
+`run.sh` returns on its own when the pipeline completes — budget about two and a half minutes, plus
+the image pull the first time a node runs this release. Its first minute looks alarming and is not:
+`E ... Failed to update pipeline` from the runner, once a second until the controller publishes
+`leader_controller_address` (38 lines here, because the jobs were pulling the image), and three
+`W ... Component became broken` (`/build_cache`, `/collect_feedback`, `/update_metrics`) from the
+controller, all recovered within five seconds.
+`W ... Some computations has partial traverse coverage (Computations: [reader])` then appears every
+5 s **in bursts while a table is being taken up** — nine lines here, in two runs of 14:31:17–14:31:37
+and 14:32:02–14:32:17, one per table — and is silent in between and after. (In an endless pipeline
+the same warning never stops; that is the shape the other scenarios record.)
 
 Then check the output, and finally `./stop.sh static_table` to abort the vanilla operation (the
 pipeline is already `completed`, a final state, so there is nothing to stop):
@@ -162,10 +173,11 @@ yt select-rows "flow_queue_meta from [$YT_DEV_ROOT/static_table/output_queue] wh
 
 ## Observed output
 
-Recorded against the server build `run.sh` prints on the way in:
+Measured on `ghcr.io/ytsaurus/flow-nightly:dev-0.1.0`, whose `flow_server` — the one `run.sh`
+prints on the way in — reports:
 
 ```
-flow_server: 26.2.0-local-os~5c69dd1804e43fe5
+flow_server: 26.3.0-local-os~bc0fc6f44e870a8f
 ```
 
 `run.sh` ends with, and exits 0 on (cluster URL and Cypress root elided):
@@ -187,20 +199,21 @@ matches expected (data + event time): True
 $ yt select-rows "flow_queue_meta from [...output_queue] where is_null(data)" --format json
 {"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":0,"pure_heartbeat":true}}
 {"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":0,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1499996400,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1499996400,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1499996400,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1499996400,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1500000000,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1500000000,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1500000000,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1500000000,"pure_heartbeat":true}}
 {"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1600000000,"pure_heartbeat":true}}
 {"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1600000000,"pure_heartbeat":true}}
-{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1786433121,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1789306360,"pure_heartbeat":true}}
+{"flow_queue_meta":{"event_timestamp_deltas":[],"event_watermark":1789306370,"pure_heartbeat":true}}
 …
 ```
 
 `data` + event time match the upstream test's `expected_output` exactly: 1000 `payload_first_*` rows
 at `1500000000` and 1000 `payload_second_*` rows at `1600000000`, each exactly once. The number of
 heartbeat rows is not fixed — the controller keeps writing one every 10 s for as long as the vanilla
-operation lives, so it grows until `./stop.sh static_table` (16 by the time this run was aborted).
+operation lives, so it grows until `./stop.sh static_table` (13 by the time this run was aborted).
 
 Upstream's two secondary assertions hold too. The pipeline's `states` table is empty, and — the part
 that is specific to a *swift* source — the source's partitions were cleaned up on completion, so no
@@ -214,13 +227,18 @@ $ yt select-rows "sum(1) as cnt from [$YT_DEV_ROOT/static_table/pipeline/flow_st
 (no rows)
 ```
 
-Timings for that run (one worker, the binary already in the cluster's file cache): `run.sh` 11:23:38
-→ vanilla operation started 11:23:40 → pipeline `working` 11:23:57 → first table read 11:23:58 …
-11:24:39 → second table 11:24:39 … 11:25:16 `completed`. Just under two minutes, of which the two
-tables take about 40 s each — the rows themselves are nothing (1000 rows, 28 KB), the time goes on
-jobs: each table got a partition of its own, and each partition was served by more than one
-successive job. (The log `run.sh` streams stops the moment the pipeline completes, so it is not a
-complete job census — the controller's own log on the cluster is.)
+Timings for that run (one worker, the binary already in the cluster's file cache), in UTC:
+`run.sh` 14:30:09 → vanilla operation started 14:30:11 → controller's first log line 14:31:02 →
+pipeline `working` 14:31:17 → first table read 14:31:17 … 14:31:58 → second table 14:31:58 …
+14:32:35 `completed`. Two and a half minutes, of which the two tables take about 40 s each — the
+rows themselves are nothing (1000 rows, 28 KB), the time goes on jobs: each table got a partition
+of its own, and each partition was served by more than one successive job. (The log `run.sh`
+streams stops the moment the pipeline completes, so it is not a complete job census — the
+controller's own log on the cluster is.)
+
+The 51 s between the vanilla operation starting and the controller logging anything is the jobs
+pulling the release image onto the node. It is paid once per node per image version, not per run,
+and it is why the runner's startup noise the Run section describes is counted in tens of lines.
 
 ## Rerunning
 
@@ -232,7 +250,7 @@ queue consumer to unregister first (see `state_joiner`), because the input is no
 ./stop.sh static_table
 yt remove -r "$YT_DEV_ROOT/static_table"
 python3 static_table/yt_sync.py && python3 static_table/prepare_data.py
-FLOW_BIN=~/ytsaurus/yt/yt/flow/bin/flow_server/flow_server.stripped ./run.sh static_table
+./run.sh static_table
 ```
 
 Recreating the output queue invalidates the proxies' table mount cache, so the first `select-rows`
