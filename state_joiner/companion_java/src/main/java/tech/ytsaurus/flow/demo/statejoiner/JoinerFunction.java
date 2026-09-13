@@ -34,8 +34,8 @@ public class JoinerFunction implements BatchFunction {
         for (ExtendedMessage message : messages) {
             ReadOnlyExternalStateAccessor state = ctx.getState(TOTAL_STATE, message);
             // A key with no row in the joined table arrives as an all-null state (the worker-side
-            // preload keeps missing rows), a key the batch carried nothing for as a null state —
-            // the accessor's get() returns the state row or null, it is not Optional-valued.
+            // preload keeps missing rows), a key the batch carried nothing for as a null state:
+            // the accessor's get() hands back the state row or null.
             // Report either as -1 instead of throwing: an exception thrown in a companion is
             // retried forever, whereas a sentinel in the output table makes a broken join visible
             // at a glance.

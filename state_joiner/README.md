@@ -374,10 +374,10 @@ Deliberate differences against the C++ companion:
   the release image of the same version and passed in `FLOW_BIN`; the vanilla jobs run in
   `ghcr.io/ytsaurus/flow-java:<version>`, named in `FLOW_IMAGE`. A test release is
   `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`.
-- **The SDK's state API is not `Optional`-valued.** `StateAccessor.get()` returns the state row
-  or `null` (with `getOrDefault()` for an all-null row of the state schema), so both the joiner
-  and the offline test check for `null` rather than mapping an `Optional`. An older SDK returned
-  `Optional<Payload>`; building against a release is what pins which one you get.
+- **Both state accessors are read with `get()` / `getOrDefault()`.** `StateAccessor.get()` hands
+  back the state row or `null`; `getOrDefault()` substitutes an all-null row of the state schema.
+  The accumulator takes the second (a fresh key must still be written back with the right width),
+  the joiner the first (a null row is one of the two miss shapes above).
 
 Run, from the repo root:
 
