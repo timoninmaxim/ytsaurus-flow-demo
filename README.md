@@ -107,4 +107,5 @@ down.
 
 - `run.sh`, `stop.sh` — shared by every scenario, taking the scenario name as their argument.
 - `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`; a scenario that
-  builds a binary of its own adds `pipeline/` (C++ sources) and `build.sh`.
+  builds a binary of its own adds `pipeline/` (C++ sources) and `build.sh`, and one with several
+  spec variants has a `pipeline_<variant>.yson.template` each.
