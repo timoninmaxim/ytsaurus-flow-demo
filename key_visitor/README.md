@@ -227,12 +227,9 @@ Adaptations, stated explicitly — the asserts are unchanged:
   `flow-java` image is that image — the `flow` image plus a JRE at `/opt/java/openjdk`, so one
   image holds both the `flow_server` the jobs run and the `java` the companion is launched with.
   The resource's `jdk_bin_path` points inside it, and no `YT_FLOW_JDK_*` overrides are needed.
-- **The SDK's state API is not `Optional`-valued.** `StateAccessor.get()` returns the state row
-  or `null` and `getOrDefault(T)` supplies the fallback, so `VisitTester` checks for `null`
-  instead of mapping an `Optional`. `StatesHolder` lost its type parameter and
-  `tech.ytsaurus.flow.state.InternalState` is gone with it, so the offline test holds plain
-  `StatesHolder`s. An older SDK had all three the other way round — building against a release
-  is what pins which one you get.
+- **The state API is nullable, not `Optional`-valued.** `StateAccessor.get()` returns the state
+  row or `null` and `getOrDefault(T)` supplies the fallback, so `VisitTester` checks for `null`.
+  `StatesHolder` carries no type parameter, so the offline test holds plain `StatesHolder`s.
 - **`vanilla/controller` must be spelled out** (`count = 1`, the C++ launcher's own default):
   the Java runner unconditionally creates the `controller` map while patching JDK layers, and
   an empty map fails `flow_server` config parsing on the missing required `count`.
