@@ -5,3 +5,8 @@ env.sh
 pipeline.yson
 *.stripped
 .cache/
+pipeline_java.yson
+.gradle/
+working_pipeline_telemetry/companion_java/build/
+working_pipeline_telemetry/logs/
+working_pipeline_telemetry/companion_java/logs/
