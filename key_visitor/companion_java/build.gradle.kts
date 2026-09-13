@@ -2,8 +2,16 @@ plugins {
     java
 }
 
+// The Flow release version; a test release is published as X.Y.Z-SNAPSHOT.
+val flowVersion = providers.gradleProperty("flowVersion").getOrElse("0.1.0-SNAPSHOT")
+
 repositories {
     mavenCentral()
+    // Flow test releases (X.Y.Z-SNAPSHOT) live in the Sonatype snapshot repository.
+    maven {
+        url = uri("https://central.sonatype.com/repository/maven-snapshots/")
+        mavenContent { snapshotsOnly() }
+    }
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -11,14 +19,12 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 dependencies {
-    // Substituted with the sibling ytsaurus checkout's subprojects (see settings.gradle.kts);
-    // the version is a placeholder the substitution overrides.
-    implementation("tech.ytsaurus:flow-runner:1.0.0")
+    implementation("tech.ytsaurus:flow-runner:$flowVersion")
     // @Entity marks the per-key state POJO for the SDK's YSON serializer.
     implementation("javax.persistence:persistence-api:1.0")
     runtimeOnly("org.apache.logging.log4j:log4j-slf4j2-impl:2.25.1")
 
-    testImplementation("tech.ytsaurus:flow-core:1.0.0")
+    testImplementation("tech.ytsaurus:flow-core:$flowVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
 }
@@ -36,14 +42,6 @@ tasks.named<Test>("test") {
 tasks.register<Sync>("collectRuntime") {
     dependsOn(tasks.jar)
     from(tasks.jar)
-    from(configurations.runtimeClasspath) {
-        eachFile {
-            // Several checkout subprojects produce identically named jars (proto.jar);
-            // disambiguate by the producing project's directory.
-            if (name == "proto.jar") {
-                name = file.parentFile.parentFile.parentFile.parentFile.name + "-proto.jar"
-            }
-        }
-    }
+    from(configurations.runtimeClasspath)
     into(layout.buildDirectory.dir("companion-libs"))
 }

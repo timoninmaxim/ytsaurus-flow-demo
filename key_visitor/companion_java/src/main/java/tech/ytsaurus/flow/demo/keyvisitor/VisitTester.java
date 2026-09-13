@@ -31,7 +31,7 @@ public class VisitTester implements RowFunction {
     public void onMessage(ExtendedMessage message, OutputCollector output, RuntimeContext ctx) {
         StateAccessor<UserState> accessor = ctx.getState(USER_STATE, message);
         // Keep the previously stored visit counter; only the payload changes.
-        UserState state = accessor.get().orElseGet(UserState::new);
+        UserState state = accessor.getOrDefault(new UserState());
         state.setPayload(message.get("payload", String.class));
         accessor.set(state);
     }
@@ -39,7 +39,7 @@ public class VisitTester implements RowFunction {
     @Override
     public void onVisit(Visit visit, OutputCollector output, RuntimeContext ctx) {
         StateAccessor<UserState> accessor = ctx.getState(USER_STATE, visit);
-        UserState state = accessor.get().orElse(null);
+        UserState state = accessor.get();
         if (state == null) {
             return;
         }

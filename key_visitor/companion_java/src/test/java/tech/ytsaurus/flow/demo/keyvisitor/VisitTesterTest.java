@@ -17,7 +17,6 @@ import tech.ytsaurus.flow.row.ExtendedMessage;
 import tech.ytsaurus.flow.row.Message;
 import tech.ytsaurus.flow.row.Payload;
 import tech.ytsaurus.flow.row.Visit;
-import tech.ytsaurus.flow.state.InternalState;
 import tech.ytsaurus.flow.state.StatesHolder;
 import tech.ytsaurus.flow.stream.FlowStreams;
 import tech.ytsaurus.flow.stream.StreamIdsMapping;
@@ -55,7 +54,7 @@ public class VisitTesterTest {
     private Computation computation;
     private StreamSpecs streamSpecs;
     private Job job;
-    private java.util.Map<String, StatesHolder<InternalState>> states;
+    private java.util.Map<String, StatesHolder> states;
 
     @BeforeEach
     public void setUp() {
@@ -83,7 +82,7 @@ public class VisitTesterTest {
         job = new Job(GUID.create(), "tester", streamSpecs, staticSpec, dynamicSpec, KEY_SCHEMA);
 
         states = new java.util.HashMap<>();
-        states.put("user_state", new StatesHolder<>("user_state", KEY_SCHEMA));
+        states.put("user_state", new StatesHolder("user_state", KEY_SCHEMA));
     }
 
     private Payload keyOf(String key) {

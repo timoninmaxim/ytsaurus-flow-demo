@@ -213,18 +213,26 @@ and Go variants. The topology, choreography and asserts are identical:
 
 Adaptations, stated explicitly — the asserts are unchanged:
 
-- **The Flow Java SDK is not on Maven Central yet** (checked: no `tech.ytsaurus:flow-core`
-  artifact, and the checkout's flow modules carry no `maven-publish` config either), so
-  `companion_java/settings.gradle.kts` composite-includes a sibling source checkout of
-  `github.com/ytsaurus/ytsaurus` and substitutes the `tech.ytsaurus:flow-*` coordinates with
-  its subprojects — the Java equivalent of the Go variant's `go.mod` `replace`.
+- **The SDK and the server come from a Flow release, not from a source checkout.** The Gradle
+  build resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven Central, test
+  releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner ships is taken out of
+  the release image of the same version, `ghcr.io/ytsaurus/flow-java:<version>` (`docker create`
+  + `docker cp`, or `./fetch_image_file.py` from the repo root when there is no docker), and
+  passed in `FLOW_BIN`; the vanilla jobs run in that same image, named in `FLOW_IMAGE`. A test
+  release is `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`.
 - **JDK delivery into the job**: by default the Java runner mounts internal JDK *porto layers*,
-  which do not exist on this cluster (its exec nodes run a CRI job environment). The overrides
-  the SDK provides for its own local tests do the job here too: `YT_FLOW_JDK_LAYERS='[]'` drops
-  the layers and `YT_FLOW_JDK_BIN_PATH` points at the java binary of the worker task's
-  `docker_image` — `docker.io/library/eclipse-temurin:17-jre` in the template (the registry
-  prefix is required: a bare `eclipse-temurin:17-jre` is resolved against the cluster's Cypress
-  image registry and fails the operation).
+  which do not exist on this cluster (its exec nodes run a CRI job environment). Naming a
+  `docker_image` on the vanilla tasks switches the launch to docker mode, and the release's own
+  `flow-java` image is that image — the `flow` image plus a JRE at `/opt/java/openjdk`, so one
+  image holds both the `flow_server` the jobs run and the `java` the companion is launched with.
+  The resource's `jdk_bin_path` points inside it, and no `YT_FLOW_JDK_*` overrides are needed.
+- **The SDK's state API is not `Optional`-valued.** `StateAccessor.get()` returns the state row
+  or `null` and `getOrDefault(T)` supplies the fallback, so `VisitTester` checks for `null`
+  instead of mapping an `Optional`. `StatesHolder` lost its type parameter and
+  `tech.ytsaurus.flow.state.InternalState` is gone with it, so the offline test holds plain
+  `StatesHolder`s. An older SDK had all three the other way round — building against a release
+  is what pins which one you get.
 - **`vanilla/controller` must be spelled out** (`count = 1`, the C++ launcher's own default):
   the Java runner unconditionally creates the `controller` map while patching JDK layers, and
   an empty map fails `flow_server` config parsing on the missing required `count`.
@@ -240,13 +248,17 @@ the test builds `RequestContext`s directly.
 
 Everything runs under its own Cypress root, `$YT_DEV_ROOT/key_visitor_java`;
 `companion_java/{yt_sync,prepare_data,verify}.py` are the same bootstrap/seed/assert scripts
-pointed at that root. On this demo cluster, run the erasure-codec workaround right after
-`yt_sync.py` (see the Go section).
+pointed at that root. The erasure-codec workaround the Go section describes is no longer needed
+here: the published `ytsaurus-flow-yt-sync-mini` now bootstraps the pipeline's system tables with
+`erasure_codec = none`, which a small cluster can write.
 
 Run, from the repo root:
 
 ```bash
-key_visitor/companion_java/build.sh     # gradle test + collectRuntime (JDK 17+; uses ../ytsaurus/gradlew)
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0
+./fetch_image_file.py "$FLOW_IMAGE" /usr/bin/flow_server ~/flow_server  # or docker create + docker cp
+export FLOW_BIN=~/flow_server
+key_visitor/companion_java/build.sh     # gradle test + collectRuntime (JDK 17+, SDK 0.1.0-SNAPSHOT from Maven)
 
 python3 key_visitor/companion_java/yt_sync.py       # once: Cypress objects under key_visitor_java/
 python3 key_visitor/companion_java/prepare_data.py  # 20 keys as v1, then the same 20 as v2
@@ -257,16 +269,17 @@ python3 key_visitor/companion_java/verify.py
 ./stop.sh key_visitor_java              # aborts the vanilla operation
 ```
 
-Recorded from the live run on the demo cluster, flow core build `baaaeedb` (the commit hash the
-server logs at startup); the runner launched at 23:57:50 and printed `Pipeline completed` at
-00:00:29 — about 160 seconds
-end to end, with `verify.py` passing on its first run:
+Recorded from the live run on the demo cluster against the Flow release `0.1.0-SNAPSHOT` — jars
+from Maven, `flow_server` and the vanilla image from `ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0`
+(the runner logs the server's own `Flow core build info`, tag `flow-test/0.1.0`, commit
+`bc0fc6f4`). The runner launched at 17:31:30 and printed `Pipeline completed` at 17:33:22 — about
+110 seconds end to end, with `verify.py` passing on its first run:
 
 ```
 $ python3 key_visitor/companion_java/verify.py
 ok: pipeline reached `completed`
 ok: all 20 seeded keys were visited
 ok: the latest visit of every key carries the v2 payload
-output rows: 25; per-key max visit_index range: 1..2
+output rows: 26; per-key max visit_index range: 1..2
 OK: the final key-visitor pass swept the post-completion state of every key
 ```
