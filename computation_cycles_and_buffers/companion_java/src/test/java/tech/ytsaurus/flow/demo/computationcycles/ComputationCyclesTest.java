@@ -2,7 +2,6 @@ package tech.ytsaurus.flow.demo.computationcycles;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,9 +94,8 @@ public class ComputationCyclesTest {
     }
 
     private Long countOf(TestDoProcessResponse response, String data) {
-        return response.allStates().get(Reducer.COUNT_STATE, keyOf(data)).get()
-                .map(payload -> payload.get("count", Long.class))
-                .orElse(null);
+        Payload row = response.allStates().get(Reducer.COUNT_STATE, keyOf(data)).get();
+        return row == null ? null : row.get("count", Long.class);
     }
 
     /** Drives one computation over one input batch and re-wraps the outputs as inputs. */
@@ -221,7 +219,7 @@ public class ComputationCyclesTest {
         // reader → transform_a → swift_map_a → transform_b → swift_map_b → transform_a →
         // reducer; the reducer's external state is carried across batches by hand, since every
         // harness call is stateless. The count must end at exactly 1000.
-        Optional<Payload> state = Optional.empty();
+        Payload state = null;
         int total = 1000;
         int batchSize = 30;
         for (int fed = 0; fed < total; fed += batchSize) {
@@ -242,14 +240,13 @@ public class ComputationCyclesTest {
             assertEquals(size, messages.size());
 
             var request = TestDoProcessRequest.builder("reducer").setMessages(messages);
-            state.ifPresent(payload ->
-                    request.setState(Reducer.COUNT_STATE, keyOf("payload"), payload));
+            if (state != null) {
+                request.setState(Reducer.COUNT_STATE, keyOf("payload"), state);
+            }
             var response = harness.doProcess(request.build());
             state = response.allStates().get(Reducer.COUNT_STATE, keyOf("payload")).get();
         }
 
-        assertEquals(1000L, state
-                .map(payload -> payload.get("count", Long.class))
-                .orElse(null));
+        assertEquals(1000L, state.get("count", Long.class));
     }
 }

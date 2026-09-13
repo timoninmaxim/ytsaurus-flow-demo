@@ -285,9 +285,11 @@ The plumbing is `word_count_sync/companion_java`'s with one difference: the Flow
 from Maven instead of a sibling ytsaurus checkout. The rest is unchanged: one entry point for the
 runner and the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the
 `collectRuntime` jar directory the runner ships from `java.library.path`, `TJavaCompanionManager` with only
-`main_class` set, `port_count = 3`, and — this cluster having no porto layers — the
-`eclipse-temurin:17-jre` docker image plus the `YT_FLOW_JDK_LAYERS='[]'` /
-`YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` overrides in `run.sh`.
+`main_class` set, `port_count = 3`, and — this cluster having no porto layers — a docker image
+carrying the JDK. That image is the release's own `flow-java`, which is the `flow` image plus a
+JRE at `/opt/java/openjdk`: one image holds both the `flow_server` the jobs run and the `java`
+the companion is launched with, so the resource's `jdk_bin_path` points inside it and no
+`YT_FLOW_JDK_*` overrides are needed.
 
 Adaptations against the C++ variant, stated explicitly — the asserts are unchanged:
 
@@ -317,7 +319,11 @@ Adaptations against the C++ variant, stated explicitly — the asserts are uncha
   `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner ships is taken out of
   the release image of the same version, `ghcr.io/ytsaurus/flow:<version>` (`docker create` +
   `docker cp`, or `./fetch_image_file.py` from the repo root when there is no docker), and passed
-  in `FLOW_BIN`.
+  in `FLOW_BIN`. The vanilla jobs run in `ghcr.io/ytsaurus/flow-java:<version>`, named in
+  `FLOW_IMAGE`; a test release is `ghcr.io/ytsaurus/flow-java-nightly:dev-<version>`.
+- **The SDK's state API is not `Optional`-valued.** `StateAccessor.get()` returns the state row
+  or `null`, so the offline test checks for `null` rather than mapping an `Optional`. An older
+  SDK returned `Optional<Payload>`; building against a release is what pins which one you get.
 
 The cycle logic is proven offline first: `ComputationCyclesTest` drives all six computations
 through the SDK's `TestComputationHarness` (`flow-test-utils`) against a trimmed copy of the
@@ -330,7 +336,8 @@ needed. The trimmed spec omits the live `sleep_per_message` values, which only p
 Run, from the repo root:
 
 ```bash
-./fetch_image_file.py ghcr.io/ytsaurus/flow-nightly:dev-0.1.0 /usr/bin/flow_server ~/flow_server  # or docker cp
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0
+./fetch_image_file.py "$FLOW_IMAGE" /usr/bin/flow_server ~/flow_server  # or docker create + docker cp
 export FLOW_BIN=~/flow_server
 computation_cycles_and_buffers/companion_java/build.sh   # gradle test + collectRuntime (JDK 17+, SDK 0.1.0-SNAPSHOT from Maven)
 python3 computation_cycles_and_buffers/companion_java/yt_sync.py  # once: objects under computation_cycles_java/
