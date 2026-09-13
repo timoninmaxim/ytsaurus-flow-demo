@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.google.protobuf.ByteString;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import tech.ytsaurus.client.rows.UnversionedRow;
@@ -20,7 +21,7 @@ import tech.ytsaurus.flow.row.Message;
 import tech.ytsaurus.flow.row.Payload;
 import tech.ytsaurus.flow.row.codec.DefaultYsonCodec;
 import tech.ytsaurus.flow.row.codec.YsonByteArrayCodec;
-import tech.ytsaurus.flow.state.InternalState;
+import tech.ytsaurus.flow.state.State;
 import tech.ytsaurus.flow.state.StatesHolder;
 import tech.ytsaurus.flow.stream.FlowStreams;
 import tech.ytsaurus.flow.stream.StreamIdsMapping;
@@ -58,7 +59,7 @@ public class ReducerTest {
     private Computation computation;
     private StreamSpecs streamSpecs;
     private Job job;
-    private Map<String, StatesHolder<InternalState>> states;
+    private Map<String, StatesHolder> states;
 
     @BeforeEach
     public void setUp() {
@@ -86,7 +87,7 @@ public class ReducerTest {
         job = new Job(GUID.create(), "Reducer", streamSpecs, staticSpec, dynamicSpec, KEY_SCHEMA);
 
         states = new HashMap<>();
-        states.put("state", new StatesHolder<>("state", KEY_SCHEMA));
+        states.put("state", new StatesHolder("state", KEY_SCHEMA));
     }
 
     /** Stands in for the live farm_hash: any deterministic hash works offline because the key
@@ -126,9 +127,9 @@ public class ReducerTest {
     }
 
     private ReducerState stateOf(String key) {
-        InternalState state = states.get("state").get(keyRowOf(key));
+        State state = states.get("state").get(keyRowOf(key));
         assertNotNull(state, "no state entry for key " + key);
-        return CODEC.decode(state.getValue());
+        return CODEC.decode(state.getBytes().toByteArray());
     }
 
     @Test
@@ -169,7 +170,7 @@ public class ReducerTest {
         var prior = new ReducerState();
         prior.setCount(190);
         prior.setLastData("old");
-        states.get("state").load(keyRowOf("seen"), new InternalState(CODEC.encode(prior)));
+        states.get("state").load(keyRowOf("seen"), new State(ByteString.copyFrom(CODEC.encode(prior))));
 
         process(List.of(messageOf("seen", "new1"), messageOf("seen", "new2")));
 
@@ -183,11 +184,11 @@ public class ReducerTest {
         var foreign = new ReducerState();
         foreign.setCount(7);
         foreign.setLastData("keep");
-        states.get("state").load(keyRowOf("foreign"), new InternalState(CODEC.encode(foreign)));
+        states.get("state").load(keyRowOf("foreign"), new State(ByteString.copyFrom(CODEC.encode(foreign))));
 
         process(List.of(messageOf("touched", "d")));
 
-        var modified = states.get("state").getModifiedStates();
+        var modified = states.get("state").collectModifiedStates();
         assertEquals(1, modified.size());
         assertFalse(modified.containsKey(keyRowOf("foreign")));
     }

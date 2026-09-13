@@ -173,21 +173,43 @@ fed-input honesty checks. One hardening this run forced: `feed.py` now retries i
 1703 (`Node is out of tablet memory, all writes disabled`) instead of dying — on this cluster's
 single active tablet node a sustained feed *will* meet a write freeze sooner or later.
 
+Two more things this variant pins, both about where the code comes from:
+
+- **The SDK and the server come from a Flow release, not from a source checkout.** The Gradle
+  build resolves `tech.ytsaurus:flow-*` from Maven: released versions from Maven Central, test
+  releases (`X.Y.Z-SNAPSHOT`) from the Sonatype snapshot repository; the version is
+  `-PflowVersion` (default `0.1.0-SNAPSHOT`). The `flow_server` the runner ships is taken out of
+  the release image of the same version and passed in `FLOW_BIN`; the vanilla jobs run in
+  `ghcr.io/ytsaurus/flow-java:<version>` — the `flow` image plus a JRE at `/opt/java/openjdk`, so
+  the same image carries both the server and the `java` the companion is launched with, and the
+  resource's `jdk_bin_path` points inside it. `FLOW_IMAGE` names it.
+- **The released state API is nullable, not `Optional`-valued.** `StateAccessor.get()` returns
+  the state or `null`, so the reducer opens its state with
+  `accessor.getOrDefault(new ReducerState())`. `ReducerTest`, which drives `Computation.doProcess`
+  directly, also had to follow the internals: the state value type is `State` (constructed from a
+  `ByteString`, read with `getBytes()`), `StatesHolder` is no longer generic, and modified states
+  are collected with `collectModifiedStates()`.
+
 ### Run
 
-From the repo root, with your env file sourced (the sibling `~/ytsaurus` checkout provides the
-SDK through the composite build in `settings.gradle.kts`; a JDK 17+ is required):
+From the repo root, with your env file sourced (a JDK 17+ is required; the Gradle wrapper fetches
+Gradle itself):
 
 ```bash
-transform_high_throughput/companion_java/build.sh   # gradle test + collectRuntime (66 jars)
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0   # a release is ghcr.io/ytsaurus/flow-java:<version>
+docker create --name flow "$FLOW_IMAGE" && docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+
+transform_high_throughput/companion_java/build.sh   # gradle test + collectRuntime (63 jars, SDK from Maven)
 
 python3 transform_high_throughput/companion_java/yt_sync.py  # once: pipeline node, queues, consumer, producer
 ```
 
-On this demo cluster, run the erasure-codec workaround right after `yt_sync.py` (see
-`word_count_sync/README.md`): clear `@erasure_codec` / `@hunk_erasure_codec` on the pipeline
-system tables and remount; empty tablets stuck `transient` after ~60 s need
-`yt unmount-table --force` + `yt mount-table`.
+On this demo cluster, check the pipeline system tables after `yt_sync.py` and, if any carries an
+`@erasure_codec` / `@hunk_erasure_codec` other than `none`, run the erasure-codec workaround (see
+`word_count_sync/README.md`): clear both and remount; empty tablets stuck `transient` after ~60 s
+need `yt unmount-table --force` + `yt mount-table`. A current `yt_sync_mini` bootstraps them
+without erasure, so on the run below there was nothing to do.
 
 ```bash
 transform_high_throughput/companion_java/run.sh     # deploy + stream the controller log; Ctrl-C detaches
@@ -200,36 +222,40 @@ python3 transform_high_throughput/companion_java/measure.py                     
 
 ### Observed output
 
-Recorded from the live run on the demo cluster, SDK and jars built from ytsaurus commit
-`5eefc43c4d6` (heads/main), stock `flow_server` from the same checkout, one worker, worker task
-in the `docker.io/library/eclipse-temurin:17-jre` image. The pipeline reached `working` in ~30
-seconds and survived, over the session, two node-wide tablet write freezes (1703), a
-`pause-pipeline`/`start-pipeline` cycle and two force-remounts of empty system tables — without
-losing or duplicating a row (see the ledger below).
+Recorded from the live run on the demo cluster on Flow release `0.1.0-SNAPSHOT` end to end — the
+SDK from the Sonatype snapshot repository, `flow_server` and the job image out of
+`ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0` — one worker. The pipeline reached `working` 24
+seconds after the vanilla operation started and stayed there for the whole session, with no
+tablet write freeze (1703) this time: the scenario's tablets were pinned to an idle tablet cell
+first, so the feed never met the node the earlier runs kept filling up.
 
-Two 60-second windows, measured while **two** feeder processes (an orphaned earlier feeder plus
-the intended one, ~16.1K rows/s combined) kept the input backlog *growing* — so unlike the Go
-run, the pipeline, not the feed, was the bottleneck inside both windows:
+Two 60-second windows, measured while **two** feeder processes (`--rate 9000` each, ~18.0K
+rows/s achieved) kept a 1.1-million-row input backlog in front of the pipeline:
 
 ```
 $ python3 transform_high_throughput/companion_java/measure.py 60
 pipeline state: working
-t0 sample: 3403031 rows, 420645106 cumulative bytes, input backlog 160092 rows; measuring for 60s ...
-throughput: 15876 rows/s, 1.868 MB/s (+961918 rows in 60.6s, queue at 4364949 rows)
-input backlog: 160092 rows at t0 -> 170062 rows at t1
-ok: states table has 7988 Reducer keys
-OK: sustained `working`, 15876 rows/s with a non-empty input backlog, states table has 7988 keys
+t0 sample: 331998 rows, 41001948 cumulative bytes, input backlog 1223352 rows; measuring for 60s ...
+throughput: 19606 rows/s, 2.313 MB/s (+1183000 rows in 60.3s, queue at 1514998 rows)
+input backlog: 1223352 rows at t0 -> 1165746 rows at t1
+ok: states table has 7428 Reducer keys
+OK: sustained `working`, 19606 rows/s with a non-empty input backlog, states table has 7428 keys
 
 $ python3 transform_high_throughput/companion_java/measure.py 60
-throughput: 15941 rows/s, 1.876 MB/s (+968488 rows in 60.8s, queue at 5353443 rows)
-input backlog: 186062 rows at t0 -> 212008 rows at t1
+throughput: 18967 rows/s, 2.236 MB/s (+1146222 rows in 60.4s, queue at 2952774 rows)
+input backlog: 1145998 rows at t0 -> 1121573 rows at t1
+ok: states table has 7798 Reducer keys
 ```
+
+The backlog shrank slightly inside both windows, so ~19K rows/s is still a *feed*-set lower
+bound and not the pipeline's ceiling — the pipeline drained 7.56 million rows faster than two
+feeder processes could produce them.
 
 The exactly-once ledger, after stopping the feed and letting the backlog drain to zero — input
 rows ever written, consumer offsets committed, and output rows agree to the row:
 
 ```
-written=6048003 consumed=6048003 output=6048003 backlog=0
+written=7560000 consumed=7560000 output=7560000 backlog=0
 ```
 
 The four-way comparison, same pipeline shape, same partition counts, same one worker (~123
@@ -238,20 +264,21 @@ bytes/row throughout):
 | Variant | User code runs in | rows/s | MB/s | vs C++ |
 |---|---|---|---|---|
 | C++ (`pipeline/main.cpp`) | worker process, in-binary | 9,505 | 1.119 | 100% |
-| **Java (`companion_java/`)** | one JVM, gRPC companion | **15,876–15,941** | **1.87** | **167%** |
+| **Java (`companion_java/`)** | one JVM, gRPC companion | **18,967–19,606** | **2.24–2.31** | **~200%** |
 | Go (`companion_go/main.go`) | one Go process, gRPC companion | 8,004 | 0.942 | 84% |
 | Python (`companion_py/main.py`) | one CPython process, gRPC companion | 5,726 | 0.672 | 60% |
 
 Read the table with its capping conditions in mind — each figure is a lower bound set by a
-different limiter, not a controlled shoot-out. The C++ 9,505 is the self-generating random
-source's pull rate; the Go 8,004 and Python 5,726 were measured against an 8K-rows/s feed on a
-day the tablet node froze writes above that; the Java run happened to get both a ~16K feed (the
-duplicate feeder) and a node that had just reclaimed ~700 MB of block cache, and kept up at
-~15.9K rows/s with the backlog still growing. What the Java figure does establish: the companion
-gRPC hop plus JVM YSON re-encoding is **not** the transform path's bottleneck at twice the rate
-any earlier variant was capped at.
+different limiter, not a controlled shoot-out, and only the Java row was re-measured on the
+release (the other three are the earlier checkout-build runs, kept for shape, not for a
+version-to-version comparison). The C++ 9,505 is the self-generating random source's pull rate;
+the Go 8,004 and Python 5,726 were measured against an 8K-rows/s feed on a day the tablet node
+froze writes above that; the Java ~19K is what two feeder processes could deliver, with the
+pipeline still ahead of them. What the Java figure does establish: the companion gRPC hop plus
+JVM YSON re-encoding is **not** the transform path's bottleneck at twice the rate any earlier
+variant was capped at.
 
-The per-key state, filtered as the C++ check is (`8159` keys by the end of the run, the same
+The per-key state, filtered as the C++ check is (`8261` keys by the end of the run, the same
 key neighbourhood around one million; the `@Entity` codec keeps the C++ field names inside the
 binary-YSON payload):
 

@@ -42,7 +42,7 @@ public class Reducer implements BatchFunction {
 
         for (List<ExtendedMessage> group : groups.values()) {
             StateAccessor<ReducerState> accessor = ctx.getState(STATE, group.get(0));
-            ReducerState state = accessor.get().orElseGet(ReducerState::new);
+            ReducerState state = accessor.getOrDefault(new ReducerState());
 
             String lastData = null;
             for (ExtendedMessage message : group) {
