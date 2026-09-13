@@ -130,14 +130,15 @@ binary. `TelemetryMain` registers both computations: `FailingRead` on the swift-
 `companion_java/verify.py` is the reference `verify.py` with only the pipeline path switched to
 this variant's own root `$YT_DEV_ROOT/working_pipeline_telemetry_java`.
 
-The plumbing is the other `companion_java` variants', unchanged: one entry point for the runner
-and the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the composite
-Gradle build substituting the unpublished SDK with a sibling ytsaurus checkout, the
+The plumbing is the other `companion_java` variants' with one difference: the Flow Java SDK comes
+from Maven instead of a sibling ytsaurus checkout. The rest is unchanged: one entry point for the
+runner and the companion (`FlowApplication.run` picks the role from `YT_FLOW_MODE`), the
 `collectRuntime` jar directory the runner ships from `java.library.path`,
 `TJavaCompanionManager` with `main_class` (and this scenario's `backoff` block, which the
-manager's base config carries), `port_count = 3`, the `eclipse-temurin:17-jre` docker image plus
-the `YT_FLOW_JDK_LAYERS='[]'` / `YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` overrides in
-`run.sh`, and `abort_on_specs_parseability_error = %false` (startup logs the usual single
+manager's base config carries), `port_count = 3`, the release's own `flow-java` docker image —
+the `flow` image plus a JRE at `/opt/java/openjdk`, so one image holds both the `flow_server` the
+jobs run and the `java` the companion is launched with, and no `YT_FLOW_JDK_*` overrides are
+needed — and `abort_on_specs_parseability_error = %false` (startup logs the usual single
 `E SimpleRunner … Static spec has unrecognized fields` naming exactly the user parameters —
 logged unconditionally, refuses nothing, and the parameters do reach the companion, as every
 injected failure proves).
@@ -152,52 +153,42 @@ buffer visibly hold data.
 
 ### What a Java failure looks like in `describe-pipeline` — both shapes
 
-This port's novel question: Java user code can fail two ways that the SDK server treats very
-differently — throwing an **`Exception`** and throwing an **`Error`** — and the spec injects
-both (`fail_key = "1100"` throws a `RuntimeException`, `error_key = "1101"` throws an
-`AssertionError`). The SDK server's ProcessBatch handler catches `Exception` only
-(`CompanionService.processBatch`'s `catch (Exception e)`) and rejects the call with a flat
-gRPC `INTERNAL` status whose description is `"Error processing batch: " + e.getMessage()`.
-Observed verbatim on the live run:
+This port's novel question: Java user code can fail two ways — throwing an **`Exception`** and
+throwing an **`Error`** — and the spec injects both (`fail_key = "1100"` throws a
+`RuntimeException`, `error_key = "1101"` throws an `AssertionError`). On the released SDK
+(`0.1.0-SNAPSHOT`) the companion server treats them **identically**: it rejects the call with a
+gRPC `INTERNAL` status whose description names the computation and the exception class ahead of
+the user message. Observed verbatim on the live run:
 
 ```
-Job failed (JobFinishReason: Failed): Error processing batch: Got fail key 1100. Comment: TELEMETRY_DEMO_INTENTIONAL_FAIL
-Job failed (JobFinishReason: Failed): Application error processing RPC
+Job failed (JobFinishReason: Failed): Error processing batch (ComputationId: reader): java.lang.RuntimeException: Got fail key 1100. Comment: TELEMETRY_DEMO_INTENTIONAL_FAIL
+Job failed (JobFinishReason: Failed): Error processing batch (ComputationId: reader): java.lang.AssertionError: Got error key 1101. Comment: TELEMETRY_DEMO_INTENTIONAL_FAIL
 ```
 
 (and, while the retry budget lasts, the same texts behind
-`Retryable error in component "/operations/DoProcess": ` — either message satisfies the first
-assert for the exception shape.) Consequences, compared to the C++ variant's
+`Received job retryable error (Component: /operations/DoProcess, …)` — either message satisfies
+the first assert.) Consequences, compared to the C++ variant's
 `Job failed (JobFinishReason: Failed): Got fail key 1100. Comment: …`, the Python variant's
 `… Error processing batch: Got fail key 1100. Comment: …` and the Go variant's
 `… flow: process batch failed: computation "reader": OnMessage on input "<id>": …`:
 
-- **The exception shape preserves the user message and nothing else.** The description is
-  the outermost exception's `getMessage()` behind the same `Error processing batch: ` wrapper
-  text Python uses — but the exception **class name, cause chain and stack trace are all
-  dropped** (Go at least prefixes the computation and the failing input's message id; an
-  exception with a null message would surface as `Error processing batch: null`). The describe
-  message carries one flat error — code 1, `status_code: 13`, with the failing gRPC call's
-  attributes (`method: ProcessBatch`, `service: …CompanionService`).
-- **The `Error` shape loses the user text entirely.** `catch (Exception)` does not see an
-  `AssertionError`: it escapes into grpc-java, which closes the call as `UNKNOWN`
-  (`status_code: 2`) with the generic description `Application error processing RPC` — the
-  message, class and comment never reach `describe-pipeline` or the controller log. The only
-  trace is in the worker job's stderr, printed by the JVM's default handler as the executor
-  thread dies (grpc replaces it; the companion survives):
-
-  ```
-  Exception in thread "grpc-default-executor-21" java.lang.AssertionError: Got error key 1101. Comment: TELEMETRY_DEMO_INTENTIONAL_FAIL
-      at tech.ytsaurus.flow.demo.telemetry.FailingRead.onMessage(FailingRead.java:61)
-      at tech.ytsaurus.flow.computation.Computation.doProcessMessages(Computation.java:161)
-      ...
-  ```
-
+- **The message carries the computation, the exception class and the user message.** That is
+  Go's shape minus the failing input's message id, and more than Python's — an exception with a
+  null message still shows its class. The cause chain and the stack trace are dropped; the
+  describe message carries one flat error — code 1, `status_code: 13`, with the failing gRPC
+  call's attributes (`method: ProcessBatch`, `service: …CompanionService`). The stack trace
+  stays in the worker job's stderr.
+- **An `Error` is reported exactly like an `Exception`.** This is where the release differs
+  from the pre-release checkout these examples were first written against: there an
+  `AssertionError` escaped the handler's `catch (Exception)` into grpc-java, which closed the
+  call as `UNKNOWN` (`status_code: 2`) with the useless generic description
+  `Application error processing RPC`, and the user text reached neither `describe-pipeline` nor
+  the controller log. The released server catches it, so a failing assertion is now as
+  diagnosable as a thrown exception.
 - **Both shapes are retried identically and heal identically.** The worker retries either
-  status; the injected `Error` row healed exactly as designed — the stderr shows attempts up to
-  precisely 8 for one injected error row (six in the failed job, two in its restarted
-  successor), then silence, with the same companion pid throughout: the JVM survives its own
-  escaped `Error`s.
+  status; the injected `Error` row healed as designed — the controller log shows the same
+  `AssertionError` text for the attempts of one injected row and then silence, the companion
+  JVM surviving its own escaped `Error`s.
 
 The injection logic is proven offline first: `TelemetryTest` drives both computations through
 the SDK's `TestComputationHarness` (`flow-test-utils`) — passthrough, the bounded
@@ -207,18 +198,26 @@ processor's drop — no cluster needed.
 
 ### Run
 
-From the repo root (the sibling `~/ytsaurus` checkout provides the SDK through the composite
-build in `settings.gradle.kts`):
+From the repo root. The SDK and the server both come from a Flow release: the Gradle build
+resolves `tech.ytsaurus:flow-*` from Maven (released versions from Maven Central, test releases
+`X.Y.Z-SNAPSHOT` from the Sonatype snapshot repository; the version is `-PflowVersion`, default
+`0.1.0-SNAPSHOT`), and the `flow_server` the runner ships is taken out of the release image of
+the same version:
 
 ```bash
-working_pipeline_telemetry/companion_java/build.sh   # gradle test + collectRuntime (JDK 17+)
+export FLOW_IMAGE=ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0   # a release is ghcr.io/ytsaurus/flow-java:<version>
+docker create --name flow "$FLOW_IMAGE" && docker cp flow:/usr/bin/flow_server ~/flow_server && docker rm flow
+export FLOW_BIN=~/flow_server
+
+working_pipeline_telemetry/companion_java/build.sh   # gradle test + collectRuntime (JDK 17+, SDK from Maven)
 python3 working_pipeline_telemetry/companion_java/yt_sync.py  # once: pipeline node, input_queue + consumer
 ```
 
-On a cluster with fewer than six online data nodes, clear the erasure codec the pipeline preset
-puts on the system tables before the first deploy (see `state_joiner/README.md` for the full
-story; the empty-table `unmounting` hang applies — `--force` the tablets still `transient`
-after ~20 s).
+On a cluster with fewer than six online data nodes, check the system tables after `yt_sync.py`
+and clear any `erasure_codec` / `hunk_erasure_codec` that is not `none` before the first deploy
+(see `state_joiner/README.md` for the full story; the empty-table `unmounting` hang applies —
+`--force` the tablets still `transient` after ~20 s). A current `yt_sync_mini` already
+bootstraps them without erasure.
 
 Then deploy and, from a second terminal, feed and verify:
 
@@ -237,14 +236,16 @@ echo '{"key": "1101", "data": "error-manual-0001", "$$tablet_index": 0}' \
 
 ### Observed output
 
-Recorded from the live run on the demo cluster, `flow_server` built from ytsaurus commit
-`baaaeedbe3c` (heads/main), one worker, feed at 800 rows/s with a fail row every 45 s. The
-pipeline reached `working` ~40 s after launch; `verify.py`, complete first-pass run, no check
+Recorded from the live run on the demo cluster, Flow release `0.1.0-SNAPSHOT` end to end — the
+SDK from the Sonatype snapshot repository, `flow_server` and the job image out of
+`ghcr.io/ytsaurus/flow-java-nightly:dev-0.1.0` — one worker, feed at 800 rows/s with a fail row
+every 45 s (198,406 rows and six fail rows over the session, plus one manual error row). The
+pipeline reached `working` 23 s after launch; `verify.py`, complete first-pass run, no check
 needed a retry beyond the flow-view samples upstream also waits for:
 
 ```
 $ python3 working_pipeline_telemetry/companion_java/verify.py
-    job-failure message: Retryable error in component "/operations/DoProcess": Error processing batch: Got fail key 1100. Comment: TELEMETRY_DEMO_INTENTIONAL_FAIL
+    job-failure message: Job failed (JobFinishReason: Failed): Error processing batch (ComputationId: reader): java.lang.RuntimeException: Got fail key 1100. Comment: TELEMETRY_DEMO_INTENTIONAL_FAIL
 ok: fail comment in a describe-pipeline reader job-failure message
 ok: reader epoch_part_times in flow view
 ok: processor input_buffer_bytes in flow view
@@ -252,12 +253,16 @@ ok: reader output_buffer_bytes in flow view
 ok: reader output_store_bytes in flow view
 ok: reader output_store_count in flow view
 ok: describe-workers lists 1 worker(s)
-ok: get-worker-backtraces returned 49810 bytes for [10.112.153.196]:24580
+ok: get-worker-backtraces returned 42098 bytes for [10.112.149.45]:24578
 OK: failure comment reported, buffer/epoch telemetry exposed, worker backtraces work
 
 $ yt flow get-pipeline-state "$YT_DEV_ROOT/working_pipeline_telemetry_java/pipeline"
 working
 ```
+
+The manual error row was injected while the run was going and healed the same way: seven
+`java.lang.AssertionError: Got error key 1101 …` reports, then silence, with the pipeline never
+leaving `working` — the scenario's terminal state, since its source is infinite.
 
 A second pass after two manual error rows found the `Application error processing RPC` job
 failure quoted above and passed all checks again; the feeder delivered ~449k rows (13 fail

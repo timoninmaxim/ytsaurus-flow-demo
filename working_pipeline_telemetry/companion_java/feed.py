@@ -52,12 +52,22 @@ def main():
             rows.append({"key": FAIL_KEY, "data": f"fail-{uuid.uuid4()}", "$$tablet_index": 0})
             next_fail = started + args.fail_every
             fails += 1
-        client.insert_rows(
-            queue,
-            "\n".join(json.dumps(row) for row in rows).encode(),
-            format=yt.JsonFormat(),
-            raw=True,
-        )
+        # A tablet node freezes all writes with code 1703 when its memory fills up (a busy
+        # shared cluster, or the store flusher lagging); ride the freeze out instead of dying.
+        while True:
+            try:
+                client.insert_rows(
+                    queue,
+                    "\n".join(json.dumps(row) for row in rows).encode(),
+                    format=yt.JsonFormat(),
+                    raw=True,
+                )
+                break
+            except yt.YtResponseError as err:
+                if not err.contains_code(1703):
+                    raise
+                print("tablet memory freeze (1703); retrying in 5s", flush=True)
+                time.sleep(5.0)
         total += len(rows)
         print(f"fed {total} rows ({fails} fail rows)", flush=True)
         time.sleep(max(0.0, batch_period - (time.time() - started)))
