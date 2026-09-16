@@ -21,11 +21,11 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` for controller/worker jobs. At
   the runner level IPv6 must stay **enabled** instead — the RPC endpoint is reached over NAT64.
 - **Bootstrap of Cypress objects** — `yt_sync_mini` (`yt/yt/flow/library/python/yt_sync_mini`) only;
-  no internal yt_sync. It is `pip install`-ed from the ytsaurus repo via the single wheel
-  `ytsaurus-flow-yt-sync-mini` (`yt/python/packages/ytsaurus-flow-yt-sync-mini`, alongside the other
-  ytsaurus Python packages; it bundles `pipeline_tables` too), not vendored. Each scenario ships its
-  own `yt_sync/` script (PIPELINES/STAGES dicts + `__main__.py`, as in `examples/cpp/noop/yt_sync`)
-  that creates the pipeline node and the scenario's queues/tables/consumers/producers.
+  no internal yt_sync. It is `pip install`-ed from PyPI as the single package
+  `ytsaurus-flow-yt-sync-mini` (it bundles `pipeline_tables` too), not vendored. Each scenario ships
+  its own `yt_sync/` script (PIPELINES/STAGES dicts + `__main__.py`, as in
+  `examples/cpp/noop/yt_sync`) that creates the pipeline node and the scenario's
+  queues/tables/consumers/producers.
 - **Cluster-name aliasing.** `<cluster=...>` rich-path references resolve to
   `<cluster_name>.yt.yandex.net` by default; every vanilla block must carry
   `proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}`.
