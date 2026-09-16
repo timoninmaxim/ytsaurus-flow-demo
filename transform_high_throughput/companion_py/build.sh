@@ -4,9 +4,7 @@
 #   - a self-contained CPython runtime (python-build-standalone),
 #   - the ytsaurus-flow-companion package (SDK + generated proto stubs) with its dependencies,
 #   - main.py (the reducer).
-# Same recipe as the other companion_py scenarios: the ytsaurus-flow-companion wheel is taken
-# from $WHEEL if set, and built from $YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package
-# otherwise (the package's home since 2026-08; older checkouts do not have it).
+# Same recipe as companion_python/build.sh.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -24,15 +22,12 @@ RUNTIME_TAR="$CACHE_DIR/$(basename "$PYTHON_RUNTIME_URL")"
 [ -f "$RUNTIME_TAR" ] || curl -sSL -o "$RUNTIME_TAR" "$PYTHON_RUNTIME_URL"
 tar xzf "$RUNTIME_TAR" -C build/bundle  # Extracts into build/bundle/python/.
 
-if [ -z "${WHEEL:-}" ]; then
-    YTSAURUS_SRC="${YTSAURUS_SRC:-$HOME/ytsaurus}"
-    pip3 wheel --quiet --no-deps -w build/wheels "$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package"
-    WHEEL=$(ls build/wheels/ytsaurus_flow_companion-*.whl)
-fi
+# The ytsaurus-flow-companion package comes from PyPI; it is pure python, so it installs for the
+# bundled runtime regardless of the host python.
 pip3 install --quiet --target build/bundle \
     --platform manylinux2014_x86_64 --implementation cp \
     --python-version "$BUNDLE_PYTHON_VERSION" --only-binary=:all: \
-    "$WHEEL"
+    "ytsaurus-flow-companion==${COMPANION_VERSION:-0.1.0}"
 
 cp main.py build/bundle/
 
