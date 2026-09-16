@@ -300,9 +300,8 @@ Deliberate differences against the C++ variant — the asserts are unchanged:
 - **A missing passthrough rule raises `RuntimeError`**, the port of the C++ variant's throw —
   with the same retried-forever caveat.
 
-`build.sh` follows `word_count_sync/companion_py/build.sh`: it reuses the already-built
-`ytsaurus-flow-companion` wheel from `companion_python/build/wheels/` when present and otherwise
-builds it from `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package`.
+`build.sh` follows `word_count_sync/companion_py/build.sh`; the
+`ytsaurus-flow-companion` package comes from PyPI.
 
 Run, from the repo root:
 
