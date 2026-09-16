@@ -161,8 +161,7 @@ The moving parts (all under this scenario dir, alongside the C++ variant):
   value in the queue can only have come from the companion's environment. (It also means the demo
   value lands in an output table; report a hash instead if your secret is real.)
 - `companion_py/build.sh` — packs `companion_bundle.tgz`: a self-contained CPython plus the
-  `ytsaurus-flow-companion` SDK wheel built from
-  `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package`, plus `main.py`.
+  `ytsaurus-flow-companion` SDK from PyPI, plus `main.py`.
 - `companion_py/py_companion` — the entrypoint the worker spawns; unpacks the bundle and runs the
   companion gRPC server.
 - `pipeline_py.yson.template` — stock C++ `TQueueSource` reader (finite) feeding a
@@ -177,7 +176,7 @@ The moving parts (all under this scenario dir, alongside the C++ variant):
 ### Run
 
 ```bash
-secret_env/companion_py/build.sh          # once: the companion bundle (YTSAURUS_SRC=<checkout>)
+secret_env/companion_py/build.sh          # once: the companion bundle
 python3 secret_env/companion_py/yt_sync.py
 
 # Temporary, demo-cluster only: the bootstrap preset creates the pipeline system tables with
