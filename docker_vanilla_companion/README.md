@@ -34,14 +34,13 @@ user's code:
 
 ## Build the image
 
-ytsaurus carries a Dockerfile for exactly this image — an interpreter with the companion SDK and
-`ytsaurus-client` installed. Build it from the checkout root, so the SDK is compiled from the same
-sources as the `flow_server` you deploy:
+The scenario's `Dockerfile` is exactly this image — an interpreter with the
+`ytsaurus-flow-companion` package from PyPI, which brings `ytsaurus-client` along. Build it with the
+package version equal to the `flow_server` you deploy (`0.1.0` by default):
 
 ```bash
-cd "$YTSAURUS"
-docker build -f yt/yt/flow/tools/python_companion_package/Dockerfile \
-    -t <registry>/ytflow-python-companion:<tag> .
+docker build --build-arg COMPANION_VERSION=0.1.0 \
+    -t <registry>/ytflow-python-companion:<tag> docker_vanilla_companion
 docker push <registry>/ytflow-python-companion:<tag>
 ```
 
