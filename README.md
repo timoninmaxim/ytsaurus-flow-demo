@@ -20,18 +20,10 @@ reading its output are plain `yt` CLI commands from the scenario README.
   the cluster's vanilla jobs, so it must be a Linux build from this machine.
 - Python 3 with the `ytsaurus-client` package (`pip install ytsaurus-client`) — it provides the
   `yt` CLI the scenarios are driven with.
-- The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini`, installed from a checkout of the
-  [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
+- The Flow Cypress-bootstrap library `ytsaurus-flow-yt-sync-mini` from PyPI:
 
   ```bash
-  git clone https://github.com/ytsaurus/ytsaurus.git
-  pip install ./ytsaurus/yt/yt/flow/tools/yt_sync_mini
-  ```
-
-  Or install straight from GitHub without a manual checkout:
-
-  ```bash
-  pip install "ytsaurus-flow-yt-sync-mini @ git+https://github.com/ytsaurus/ytsaurus.git#subdirectory=yt/yt/flow/tools/yt_sync_mini"
+  pip install ytsaurus-flow-yt-sync-mini
   ```
 
 ## Configuration — no secrets in this repo
