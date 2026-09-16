@@ -27,8 +27,24 @@ create_sorted_table() {
 }
 
 # insert_json <path>  — reads JSON rows from stdin (one object per line).
+# A master follower can still be serving the pre-creation snapshot of the
+# scenario root right after stop.sh removed and setup.sh recreated it, which
+# surfaces as "Node ... has no child with key"; retry until it catches up.
 insert_json() {
-    yt insert-rows "$1" --format json
+    local path=$1 rows
+    rows=$(cat)
+    for attempt in 1 2 3 4 5 6; do
+        if printf '%s\n' "$rows" | yt insert-rows "$path" --format json 2>/tmp/insert_err.$$; then
+            rm -f /tmp/insert_err.$$
+            return 0
+        fi
+        grep -q "has no child with key" /tmp/insert_err.$$ || { cat /tmp/insert_err.$$ >&2; rm -f /tmp/insert_err.$$; return 1; }
+        echo "master has not caught up with $path yet, retrying ($attempt)" >&2
+        sleep 5
+    done
+    cat /tmp/insert_err.$$ >&2
+    rm -f /tmp/insert_err.$$
+    return 1
 }
 
 # read_data_rows <path>  — every row as JSON with the queue system columns

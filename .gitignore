@@ -7,4 +7,4 @@ pipeline.yson
 .cache/
 gateways.conf
 yql_*/query.yql
-ytrun.log
+ytflowrun.log

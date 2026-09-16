@@ -9,30 +9,33 @@ controller and workers as one vanilla operation — the same deployment model as
 every other scenario in this repo.
 
 In the product this provider lives inside the **YQL agent** (Query Tracker):
-you `yt start-query yql '...'` and the cluster does the rest. The demo cluster
-runs an older Query Tracker image without the provider, so these scenarios
-drive the same gateway from the dev host through `ytrun`, the YQL CLI for real
-YT clusters.
+you `yt start-query yql '...'` and the cluster does the rest. Every released
+Query Tracker image predates the feature, so these scenarios drive the same
+gateway from the dev host through **`ytflowrun`** — the ytflow-flavoured YQL
+CLI, released alongside the provider.
 
 ## Binaries
 
 Both are built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus) repo:
 
 ```bash
-./ya make --build=release yt/yql/tools/ytrun yt/yql/tools/ytflow_worker
+./ya make --build=release -DUSE_ICONV=static -DUSE_IDN=static \
+    yt/yql/tools/ytflowrun yt/yql/tools/ytflow_worker
 strip -o yt/yql/tools/ytflow_worker/ytflow_worker.stripped yt/yql/tools/ytflow_worker/ytflow_worker
 ```
 
-`run.sh` finds them at `~/ytsaurus/yt/yql/tools/ytrun/ytrun` and
+`run.sh` finds them at `~/ytsaurus/yt/yql/tools/ytflowrun/ytflowrun` and
 `~/ytsaurus/yt/yql/tools/ytflow_worker/ytflow_worker.stripped`, overridable
-with `YTRUN_BIN` / `YTFLOW_WORKER_BIN`. Strip the worker — it is uploaded to
-the cluster on every run.
+with `YTFLOWRUN_BIN` / `YTFLOW_WORKER_BIN`. Strip the worker — it is uploaded to
+the cluster on every run. The static `iconv`/`idn` flags matter: the worker
+travels into the vanilla jobs as a single file, and a stock release build links
+those two libraries dynamically.
 
-As of the September 2026 release the stock `ytrun` does not register the
-ytflow provider and host-side RPC clients cannot reach a cluster whose RPC
-proxies advertise in-cluster addresses; the build needs two small patches (an
-ytflow provider factory in `ytrun`, and `YT_RPC_PROXY_ADDRESSES` support in
-the RPC-proxy connection config). See the gap list below.
+Host-side RPC clients still cannot reach a cluster whose RPC proxies advertise
+in-cluster addresses, and the flow node config shipped into the jobs cannot be
+overridden, so the build needs two small patches (`YT_RPC_PROXY_ADDRESSES` in
+the RPC-proxy connection, and the node-config env patches). See the gap list
+below.
 
 ## How a scenario runs
 
@@ -52,7 +55,7 @@ source env.sh
 3. `setup.sh` creates the input/output queues (ordered dynamic tables with the
    `$timestamp`/`$cumulative_data_weight` system columns) and writes the input
    rows.
-4. `ytrun` executes the query: the gateway prepares the pipeline, starts the
+4. `ytflowrun` executes the query: the gateway prepares the pipeline, starts the
    vanilla operation, and returns.
 5. `run.sh` polls `yt flow get-pipeline-state` until `completed` — with finite
    streams the pipeline drains the inputs and completes on its own — then

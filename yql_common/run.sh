@@ -2,20 +2,20 @@
 # Runs a YQL-over-Flow scenario end to end:
 #   ./yql_common/run.sh <scenario>
 # Renders the gateway config and the query from their templates, bootstraps the
-# scenario's input/output queues (setup.sh), executes the query through ytrun —
-# which compiles it into a Flow pipeline and launches the vanilla operation on
-# the cluster — then waits for the pipeline to complete and checks the output
-# (verify.sh). See yql_common/README.md for the required binaries and the
-# host-connectivity patches they must carry.
+# scenario's input/output queues (setup.sh), executes the query through
+# ytflowrun — which compiles it into a Flow pipeline and launches the vanilla
+# operation on the cluster — then waits for the pipeline to complete and checks
+# the output (verify.sh). See yql_common/README.md for the required binaries and
+# the host-connectivity patches they must carry.
 set -euo pipefail
 
 SCENARIO=${1:?usage: ./yql_common/run.sh <scenario>}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 # The two binaries built from the ytsaurus checkout (see yql_common/README.md).
-YTRUN_BIN=$(readlink -f "${YTRUN_BIN:-$HOME/ytsaurus/yt/yql/tools/ytrun/ytrun}")
+YTFLOWRUN_BIN=$(readlink -f "${YTFLOWRUN_BIN:-$HOME/ytsaurus/yt/yql/tools/ytflowrun/ytflowrun}")
 YTFLOW_WORKER_BIN=$(readlink -f "${YTFLOW_WORKER_BIN:-$HOME/ytsaurus/yt/yql/tools/ytflow_worker/ytflow_worker.stripped}")
-[ -x "$YTRUN_BIN" ] || { echo "no ytrun binary at $YTRUN_BIN — build it or set YTRUN_BIN" >&2; exit 1; }
+[ -x "$YTFLOWRUN_BIN" ] || { echo "no ytflowrun binary at $YTFLOWRUN_BIN — build it or set YTFLOWRUN_BIN" >&2; exit 1; }
 [ -x "$YTFLOW_WORKER_BIN" ] || { echo "no ytflow_worker binary at $YTFLOW_WORKER_BIN — build it or set YTFLOW_WORKER_BIN" >&2; exit 1; }
 export YTFLOW_WORKER_BIN
 
@@ -46,7 +46,7 @@ echo "== bootstrapping input/output queues under $SCENARIO_ROOT"
 ./setup.sh
 
 # The cluster's RPC proxies advertise in-cluster addresses; pin the externally
-# reachable endpoint for every host-side RPC client (ytrun's gateway and the
+# reachable endpoint for every host-side RPC client (the gateway and the
 # local ytflow_worker launcher).
 export YT_RPC_PROXY_ADDRESSES="$YT_PROXY_RPC"
 
@@ -56,12 +56,12 @@ export YT_RPC_PROXY_ADDRESSES="$YT_PROXY_RPC"
 # launcher on this (IPv6-only) host keeps the default resolver.
 export YQL_YTFLOW_JOB_NODE_CONFIG_PATCH='{address_resolver={enable_ipv4=%true;enable_ipv6=%false}}'
 
-echo "== running the query through ytrun"
-YTRUN_ARGS=(-s -p query.yql --gateways-cfg gateways.conf --print-result --langver "${YQL_LANGVER:-2025.05}")
+echo "== running the query through ytflowrun"
+YTFLOWRUN_ARGS=(-s -p query.yql --gateways-cfg gateways.conf --print-result --langver "${YQL_LANGVER:-2025.05}")
 # UDF modules (String::, Datetime::, ...) are shared libraries; point
 # YQL_UDF_DIR at a directory of built *.so files when a scenario needs them.
-[ -n "${YQL_UDF_DIR:-}" ] && YTRUN_ARGS+=(--udfs-dir "$YQL_UDF_DIR")
-"$YTRUN_BIN" "${YTRUN_ARGS[@]}" ${YTRUN_EXTRA_ARGS:-} 2>&1 | tee ytrun.log
+[ -n "${YQL_UDF_DIR:-}" ] && YTFLOWRUN_ARGS+=(--udfs-dir "$YQL_UDF_DIR")
+"$YTFLOWRUN_BIN" "${YTFLOWRUN_ARGS[@]}" ${YTFLOWRUN_EXTRA_ARGS:-} 2>&1 | tee ytflowrun.log
 
 echo "== waiting for the pipeline to complete"
 for _ in $(seq 120); do
