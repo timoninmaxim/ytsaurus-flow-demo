@@ -274,10 +274,8 @@ Deliberate differences against the C++ variant — the asserts are unchanged:
   not name the functions — and the two startup `E SimpleRunner Found specs parseability error`
   lines of the C++ run do not appear at all.
 
-`build.sh` follows `swift_map_batching/companion_py/build.sh`: it reuses the already-built
-`ytsaurus-flow-companion` wheel from `companion_python/build/wheels/` when present and otherwise
-builds it from `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package` — the wheel's source
-package in the ytsaurus repo (it is not published on PyPI yet).
+`build.sh` follows `swift_map_batching/companion_py/build.sh`; the
+`ytsaurus-flow-companion` package comes from PyPI.
 
 Run, from the repo root:
 
