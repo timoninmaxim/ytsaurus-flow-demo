@@ -152,10 +152,8 @@ python3 key_visitor/companion_py/verify.py
 ./stop.sh key_visitor_py                   # aborts the vanilla operation
 ```
 
-`build.sh` follows `companion_python/build.sh` (see that README for the delivery model); the one
-addition is that it reuses an already-built `ytsaurus-flow-companion` wheel from
-`companion_python/build/wheels/` when present, since the wheel's source package
-(`yt/yt/flow/tools/companion`) is not yet published in the public repo.
+`build.sh` follows `companion_python/build.sh`; the
+`ytsaurus-flow-companion` package comes from PyPI.
 
 Recorded from the live run on the demo cluster, server build `26.2.0-local-os~5c69dd1804e43fe5`,
 first deploy, completed in under three minutes:
