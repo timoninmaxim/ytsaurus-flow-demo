@@ -359,9 +359,8 @@ Deliberate differences against the C++ companion:
   shipped as an all-null payload — is the same `get() is None`, reported as `Total = -1` for the
   same reason (an exception in a companion is retried forever). No `-1` appears in the run below.
 
-`build.sh` follows `word_count_sync/companion_py/build.sh`: it reuses the already-built
-`ytsaurus-flow-companion` wheel from `companion_python/build/wheels/` when present and otherwise
-builds it from `$YTSAURUS_SRC/yt/yt/flow/tools/python_companion_package` (not on PyPI yet).
+`build.sh` follows `word_count_sync/companion_py/build.sh`; the
+`ytsaurus-flow-companion` package comes from PyPI.
 
 Run, from the repo root:
 
