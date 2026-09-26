@@ -12,8 +12,8 @@ Terminal 1 — bootstrap once, then run the pipeline (from the repo root):
 
 ```bash
 python3 message_filter/yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
-./run.sh message_filter             # deploy + stream the controller log; Ctrl-C detaches,
-                                    # ./stop.sh message_filter stops
+./run.sh message_filter/pipeline.yson.template   # deploy + stream the controller log;
+                                                 # Ctrl-C detaches, ./stop.sh message_filter stops
 ```
 
 Terminal 2 — feed the input queue and watch the output:

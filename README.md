@@ -1,14 +1,15 @@
 # ytsaurus-flow-demo
 
 Standalone YT Flow demo pipelines deployed to an opensource YTsaurus cluster with **vanilla
-operations only**. Each scenario dir holds its pipeline spec and its Cypress bootstrap; the shared
-`run.sh`/`stop.sh` in the repo root deploy and stop any of them by name; feeding the pipeline and
-reading its output are plain `yt` CLI commands from the scenario README.
+operations only**. Each scenario dir holds its pipeline spec and its Cypress bootstrap; a pipeline
+is launched with one `podman run` of the released server image, and stopped with `stop.sh`; feeding
+the pipeline and reading its output are plain `yt` CLI commands from the scenario README.
 
 ## Released artifacts
 
 The scenarios run on the published YT Flow test release **0.2.1** (`flow-test/0.2.1`); nothing is
-built from source. A version bump changes this table and the `FLOW_IMAGE` default in `run.sh`.
+built from source. This table is the one place that names the version (a bump also changes the
+`FLOW_IMAGE` default in `run.sh`).
 
 | Artifact | Coordinate |
 |----------|------------|
@@ -26,11 +27,9 @@ pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://
     ytsaurus-flow-yt-sync-mini==0.2.1.dev10
 ```
 
-**Not covered by the artifact run:** scenarios and variants with a C++ companion or a custom C++
-binary (`secret_env`), and the `yql_*` scenarios. No C++ SDK or YQL build is released, so they need
-a `flow_server`/pipeline binary built from the [ytsaurus](https://github.com/ytsaurus/ytsaurus)
-sources; their READMEs describe that build, and `run.sh` runs such a local binary when `FLOW_BIN`
-names it.
+**Not covered by the artifact run:** scenarios that need a source build — a C++ companion, a custom
+C++ binary (`secret_env`), the `yql_*` scenarios — document their own build and local-binary launch
+command in their README.
 
 ## Prerequisites
 
@@ -60,22 +59,28 @@ the scripts read these variables from the environment and nothing else. It must 
 
 ## Deployment model
 
-`./run.sh <scenario>` renders that scenario's `pipeline.yson.template` (substituting `${VAR}`s from
-the environment) and runs the flow runner **on the dev host** — the released `flow_server` from
-`$FLOW_IMAGE`, in a podman container on the host network, with the repo mounted at its own path and
-the shell environment passed through. The runner connects over RPC, uploads that same binary,
-submits the pipeline spec and launches the controller+worker vanilla operation, then streams the
-controller log to the terminal. The jobs run inside the released image too: a spec sets
-`"docker_image" = "${FLOW_IMAGE}"` on the `controller` and `worker` tasks (a companion scenario
-sets the Java or Python server image instead). Ctrl-C only detaches — the pipeline keeps running on
-the cluster until `./stop.sh <scenario>` stops it and aborts the vanilla operation (by the alias the
-runner recorded in `@current_vanilla_operation` on the pipeline node).
+The flow runner runs **on the dev host**: the released `flow_server`, in a podman container of the
+server image on the host network, with the scenario dir mounted at its own path and the shell
+environment passed through. From the scenario dir, with the spec rendered to `pipeline.yson`:
 
-Two more things `run.sh` gives the template: `SCENARIO_DIR`, the absolute path of the scenario dir,
-which specs use to point at a file they deploy themselves (a companion binary, a bundle); and an
-optional variant — `./run.sh <scenario> <variant>` renders `pipeline_<variant>.yson.template`, for
-scenarios that ship several specs. A pipeline that lives deeper than the scenario dir is stopped by
-its path: `./stop.sh <scenario>/<variant>`.
+```bash
+podman run --rm --network host --env-host -v "$PWD:$PWD" -w "$PWD" \
+    ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
+```
+
+The runner connects over RPC, uploads its own binary, submits the pipeline spec and launches the
+controller+worker vanilla operation, then streams the controller log to the terminal. The jobs run
+inside the released image too: a spec sets `"docker_image" = "${FLOW_IMAGE}"` on the `controller`
+and `worker` tasks (a companion scenario sets the Java or Python server image instead). Ctrl-C only
+detaches — the pipeline keeps running until `./stop.sh <scenario>` stops it and aborts the vanilla
+operation (by the alias the runner recorded in `@current_vanilla_operation` on the pipeline node).
+
+`./run.sh <scenario>/pipeline[_<variant>].yson.template` is the shortcut: it renders the template
+(every `${VAR}` from the environment; an unset one fails), exporting `FLOW_IMAGE` (default: the
+server image above) and `SCENARIO_DIR` (the scenario dir, for files a spec ships through
+`local_files` — they must live inside it, the only host path the container sees), then runs the
+command above. A pipeline that lives deeper than the scenario dir is stopped by its path:
+`./stop.sh <scenario>/<variant>`.
 
 The cluster advertises only a k8s-internal RPC proxy address, which the dev host cannot resolve, so
 the runner config pins the reachable one instead of relying on proxy discovery:
@@ -104,7 +109,7 @@ Three cluster quirks every spec template accounts for:
 source env.sh                    # your private env file, once per shell
 
 python3 <scenario>/yt_sync.py    # once: Cypress objects (pip-installed yt_sync_mini)
-./run.sh <scenario>              # deploy + stream the controller log; Ctrl-C detaches
+./run.sh <scenario>/pipeline.yson.template   # deploy + stream the controller log; Ctrl-C detaches
 ```
 
 Then feed the pipeline and watch its output from a second terminal with the `yt` CLI — each
@@ -113,8 +118,8 @@ down.
 
 ## Layout
 
-- `run.sh`, `stop.sh` — shared by every scenario, taking the scenario name as their argument.
+- `run.sh` (takes the spec template), `stop.sh` (takes the scenario name) — shared by every scenario.
 - `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`; a scenario that
   builds a binary of its own from source adds `pipeline/` (C++ sources) and `build.sh`. Files a
-  spec ships to the jobs (`local_files`) must live under the repo, the only host path the runner
-  container sees.
+  spec ships to the jobs (`local_files`) must live inside the scenario dir, the only host path the
+  runner container sees.
