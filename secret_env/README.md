@@ -63,8 +63,7 @@ python3 secret_env/yt_sync.py   # once: the pipeline node (no queues or tables i
 # This scenario deploys its own binary instead of the released flow_server: render the spec
 # and run that binary directly (it uploads itself to the vanilla jobs).
 cd secret_env
-python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
-    < pipeline.yson.template > pipeline.yson
+jinjanate pipeline.yson.j2 > pipeline.yson
 ./secret_env_pipeline.stripped --config pipeline.yson
 ```
 

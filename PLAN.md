@@ -45,7 +45,8 @@ and verify that the pipeline reaches `Working` and produces the result the origi
 - **Layout per scenario** (`yandex/ytsaurus_dev/<scenario>/`):
   - `README.md` — scenario description, expected result, full command sequence (build → bootstrap →
     prepare data → deploy → verify → stop).
-  - `pipeline.yson` — spec adapted from the test (single cluster, vanilla block).
+  - `pipeline.yson.j2` — spec adapted from the test (single cluster, vanilla block), a Jinja
+    template rendered from the env with `jinjanate pipeline.yson.j2 > pipeline.yson`.
   - `pipeline/` — C++ runner program (`main.cpp` + `ya.make`), unless the stock
     `bin/flow_server` binary suffices.
   - `yt_sync/` — yt_sync_mini bootstrap script.

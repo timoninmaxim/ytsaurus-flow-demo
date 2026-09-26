@@ -8,18 +8,22 @@ A queue-to-queue pipeline built entirely from stock classes (the pipeline binary
 
 ## Run
 
-Terminal 1 — bootstrap once, render the spec, deploy (from this dir):
+Needs the prerequisites and the sourced env file from the root README (`yt` CLI,
+`ytsaurus-flow-yt-sync-mini` and `jinjanate` in one Python environment, podman).
+
+Terminal 1 — from this dir: bootstrap the Cypress objects once, render the spec, deploy:
 
 ```bash
 python3 yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
-python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
-    < pipeline.yson.template > pipeline.yson
+jinjanate pipeline.yson.j2 > pipeline.yson   # every {{ VAR }} from the env; an unset one fails the render
 podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline \
     ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
 ```
 
-The last command streams the controller log; Ctrl-C detaches, `./stop.sh message_filter` from the
-repo root stops the pipeline.
+The last command uploads the released `flow_server`, launches the controller+worker vanilla
+operation and streams the controller log; Ctrl-C only detaches, the pipeline keeps running.
+`-w /app/pipeline` becomes unnecessary from the next Flow release, whose images start in
+`/app/pipeline`.
 
 Terminal 2 — feed the input queue and watch the output:
 
@@ -34,3 +38,14 @@ yt pull-queue "$YT_DEV_ROOT/message_filter/output_queue" --offset 0 --partition-
 Only the `good_*` rows come back — the `bad` row is dropped by the filter. Insert more rows and
 pull again: nothing consumes the output queue, so `--offset` is just a row count and `0` always
 shows everything.
+
+## Stop
+
+From the repo root:
+
+```bash
+./stop.sh message_filter
+```
+
+It stops the pipeline and aborts its vanilla operation. To drop the scenario's Cypress objects as
+well: `yt remove -r "$YT_DEV_ROOT/message_filter"`.

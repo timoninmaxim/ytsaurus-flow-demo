@@ -1,9 +1,7 @@
 # ytsaurus-flow-demo
 
 Standalone YT Flow demo pipelines deployed to an opensource YTsaurus cluster with **vanilla
-operations only**. Each scenario dir holds its pipeline spec and its Cypress bootstrap; a pipeline
-is launched with one `podman run` of a released image and stopped with `stop.sh`; feeding the
-pipeline and reading its output are plain `yt` CLI commands from the scenario README.
+operations only**.
 
 ## Released artifacts
 
@@ -38,8 +36,10 @@ command in their README.
   over RPC. Its exec nodes must be able to run jobs in a docker image (`docker_image` in the
   vanilla task spec) pulled from `ghcr.io`.
 - [podman](https://podman.io/) — the launch runs in a released image.
-- Python 3 with `ytsaurus-client` (`pip install ytsaurus-client`) for the `yt` CLI the scenarios are
-  driven with, and `ytsaurus-flow-yt-sync-mini` from the table above for the Cypress bootstrap.
+- Python 3 with, in one environment: `ytsaurus-client` (`pip install ytsaurus-client`) for the `yt`
+  CLI the scenarios are driven with, `ytsaurus-flow-yt-sync-mini` from the table above for the
+  Cypress bootstrap, and [jinjanator](https://pypi.org/project/jinjanator/) (`pip install jinjanator`)
+  for `jinjanate`, which renders the spec templates.
 
 ## Configuration — no secrets in this repo
 
@@ -51,7 +51,7 @@ the scripts read these variables from the environment and nothing else. It must 
 |----------|---------|
 | `YT_TOKEN` | cluster token/password |
 | `YT_PROXY` | HTTP proxy URL reachable from your host — what the `yt` CLI and the Python client talk to |
-| `YT_PROXY_INTERNAL` | HTTP proxy URL reachable from **inside** the cluster — set it to `YT_PROXY` unless the vanilla jobs cannot resolve the public address (then use the k8s service address). Required: rendering substitutes every `${VAR}` in the spec template and fails on an unset one |
+| `YT_PROXY_INTERNAL` | HTTP proxy URL reachable from **inside** the cluster — set it to `YT_PROXY` unless the vanilla jobs cannot resolve the public address (then use the k8s service address). Required: rendering substitutes every `{{ VAR }}` in the spec template and fails on an unset one |
 | `YT_CLUSTER_NAME` | cluster name as registered in `//sys/clusters` |
 | `YT_DEV_ROOT` | Cypress root for all scenarios, e.g. `//tmp/<login>/ytsaurus_dev` |
 | `YT_POOL` | scheduler pool for vanilla operations |
@@ -75,12 +75,12 @@ the runner config pins the reachable one instead of relying on proxy discovery:
 "clients_cache" = {
     "default_connection" = {
         "enable_proxy_discovery" = %false;
-        "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        "proxy_addresses" = ["{{ YT_PROXY_RPC }}"];
     };
 };
 ```
 
-Three cluster quirks every spec template accounts for:
+Three cluster quirks every spec template (`pipeline.yson.j2`) accounts for:
 
 - `address_resolver = {enable_ipv4=%true; enable_ipv6=%true}` at the runner level — the external
   RPC endpoint is reached through NAT64, so IPv6 must stay enabled.
@@ -89,52 +89,33 @@ Three cluster quirks every spec template accounts for:
 - `vanilla/proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}` — otherwise
   `<cluster=...>` rich paths resolve through the default `*.yt.yandex.net` pattern.
 
-## Running a scenario
+### SDK pipelines
 
-From the scenario dir, with your env file sourced:
-
-```bash
-python3 yt_sync.py   # once: Cypress objects (pip-installed yt_sync_mini)
-
-# Render the spec: every ${VAR} from the environment; an unset one fails.
-python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
-    < pipeline.yson.template > pipeline.yson
-
-# Deploy + stream the controller log; Ctrl-C detaches.
-podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline \
-    ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
-```
-
-`-w /app/pipeline` becomes unnecessary from the next Flow release, whose images start in
-`/app/pipeline`.
-
-That is the launch of a pipeline built from stock classes. A Java, Python or Go pipeline launches
-through its SDK launcher instead — never bare `flow_server`. Every SDK has the same command line,
-`<pipeline program> --config pipeline.yson --flow-bin /usr/bin/flow_server`: the launcher enriches
-the spec (ships the pipeline program as the companion, fills stream schemas and companion
-resources) and hands the launch to `flow_server`. Run it in the matching released image:
+A pipeline built from stock classes is launched with the released `flow_server` itself. A Java,
+Python or Go pipeline launches through its SDK launcher instead — never bare `flow_server`. Every
+SDK has the same command line, `<pipeline program> --config pipeline.yson --flow-bin
+/usr/bin/flow_server`: the launcher enriches the spec (ships the pipeline program as the companion,
+fills stream schemas and companion resources) and hands the launch to `flow_server`. It runs in the
+matching released image:
 
 | SDK | Program (inside the scenario dir) | Image |
 |-----|-----------------------------------|-------|
 | Python | `/usr/bin/python3 main.py` — the script ends in `app.run()` | `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` |
-| Java | `/opt/java/openjdk/bin/java -cp 'lib/*' <MainClass>` — `main` calls `FlowApplication.run(args, context)`; add `-e YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` to `podman run` | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
+| Java | `/opt/java/openjdk/bin/java -cp 'lib/*' <MainClass>` — `main` calls `FlowApplication.run(args, context)`; needs `-e YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` on `podman run` | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
 | Go | `./pipeline` — a static binary whose `main` calls `runner.Launch` | `ghcr.io/ytsaurus/flow-nightly:dev-0.2.1` |
 
-e.g. `podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1 /usr/bin/python3 main.py --config pipeline.yson --flow-bin /usr/bin/flow_server`.
 Anything the program or the spec ships (`local_files`, jars) must live inside the scenario dir,
 the only host path the container sees; refer to it by a path relative to the scenario dir. The
-runner reads only `YT_TOKEN` from the environment: a scenario that forwards more variables to
-its jobs lists each with `-e NAME`.
-
-Then feed the pipeline and watch its output from a second terminal with the `yt` CLI — each
-scenario's README shows the exact commands. When done, `./stop.sh <scenario>` from the repo root
-shuts the pipeline down; a pipeline that lives deeper than the scenario dir is stopped by its
-path, `./stop.sh <scenario>/<variant>`.
+runner reads only `YT_TOKEN` from the environment: a scenario that forwards more variables to its
+jobs lists each with `-e NAME`. `-w /app/pipeline` becomes unnecessary from the next Flow release,
+whose images start in `/app/pipeline`.
 
 ## Layout
 
-- `stop.sh` (takes the scenario name) — shared by every scenario.
-- `<scenario>/` — one dir per scenario: `pipeline.yson.template`, `yt_sync.py`; a scenario that
-  builds a binary of its own from source adds `pipeline/` (C++ sources) and `build.sh`. Files a
-  spec ships to the jobs (`local_files`) must live inside the scenario dir, the only host path the
-  runner container sees.
+- `stop.sh` — shared by every scenario: `./stop.sh <scenario>` from the repo root; a pipeline that
+  lives deeper than the scenario dir is stopped by its path, `./stop.sh <scenario>/<variant>`.
+- `<scenario>/` — one dir per scenario: `README.md` with the full instruction (bootstrap, render the
+  spec, launch, feed and read, stop), `pipeline.yson.j2` (Jinja spec template), `yt_sync.py`; a
+  scenario that builds a binary of its own from source adds `pipeline/` (C++ sources) and
+  `build.sh`. Files a spec ships to the jobs (`local_files`) must live inside the scenario dir, the
+  only host path the runner container sees.
