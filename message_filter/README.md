@@ -8,13 +8,18 @@ A queue-to-queue pipeline built entirely from stock classes (the pipeline binary
 
 ## Run
 
-Terminal 1 — bootstrap once, then run the pipeline (from the repo root):
+Terminal 1 — bootstrap once, render the spec, deploy (from this dir):
 
 ```bash
-python3 message_filter/yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
-./run.sh message_filter/pipeline.yson.template   # deploy + stream the controller log;
-                                                 # Ctrl-C detaches, ./stop.sh message_filter stops
+python3 yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
+python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
+    < pipeline.yson.template > pipeline.yson
+podman run --rm --network host --env-host -v "$PWD:$PWD" -w "$PWD" \
+    ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
 ```
+
+The last command streams the controller log; Ctrl-C detaches, `./stop.sh message_filter` from the
+repo root stops the pipeline.
 
 Terminal 2 — feed the input queue and watch the output:
 

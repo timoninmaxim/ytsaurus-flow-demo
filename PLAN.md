@@ -35,9 +35,11 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   normal path with no manual fixup.
 - **Pool**: `$YT_POOL`. Worker/controller job defaults (6 CPU / 18 GiB) fit the demo exec nodes
   (16 CPU / 65 GiB × 5).
-- **Binaries** come from the released server image: the runner is its `flow_server` in podman, the
-  runner uploads that executable for the vanilla jobs, and the jobs run in the same image
-  (`docker_image`). Only source-build scenarios (C++ companions, YQL) use a local, stripped build.
+- **Binaries** come from the released images: a stock-server pipeline launches with that image's
+  `flow_server` in podman, a Java/Python/Go pipeline with its SDK launcher run in the matching
+  image; either uploads the released `flow_server` for the vanilla jobs, which run in the same
+  image (`docker_image`). Only source-build scenarios (C++ companions, YQL) use a local, stripped
+  build.
 - **Verification** runs from the dev host over the HTTP API / `yt` CLI: `get-pipeline-state`,
   `select_rows`/`read_table` on outputs, flow-view reads — mirroring the original test's asserts.
 - **Layout per scenario** (`yandex/ytsaurus_dev/<scenario>/`):
