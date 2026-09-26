@@ -21,9 +21,9 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` for controller/worker jobs. At
   the runner level IPv6 must stay **enabled** instead — the RPC endpoint is reached over NAT64.
 - **Bootstrap of Cypress objects** — `yt_sync_mini` (`yt/yt/flow/library/python/yt_sync_mini`) only;
-  no internal yt_sync. It is `pip install`-ed from the ytsaurus repo via the single wheel
-  `ytsaurus-flow-yt-sync-mini` (`yt/python/packages/ytsaurus-flow-yt-sync-mini`, alongside the other
-  ytsaurus Python packages; it bundles `pipeline_tables` too), not vendored. Each scenario ships its
+  no internal yt_sync. It is `pip install`-ed as the released wheel
+  `ytsaurus-flow-yt-sync-mini` (it bundles `pipeline_tables` too; version in the README's "Released
+  artifacts"), not vendored. Each scenario ships its
   own `yt_sync/` script (PIPELINES/STAGES dicts + `__main__.py`, as in `examples/cpp/noop/yt_sync`)
   that creates the pipeline node and the scenario's queues/tables/consumers/producers.
 - **Cluster-name aliasing.** `<cluster=...>` rich-path references resolve to
@@ -35,8 +35,9 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   normal path with no manual fixup.
 - **Pool**: `$YT_POOL`. Worker/controller job defaults (6 CPU / 18 GiB) fit the demo exec nodes
   (16 CPU / 65 GiB × 5).
-- **Binaries** are stripped before use (2.6 GB profile → ~190 MB); `deploy.sh` runs the stripped
-  copy, because the runner uploads its own executable for the vanilla jobs.
+- **Binaries** come from the released server image: `run.sh` runs its `flow_server` in podman, the
+  runner uploads that executable for the vanilla jobs, and the jobs run in the same image
+  (`docker_image`). Only source-build scenarios (C++ companions, YQL) use a local, stripped build.
 - **Verification** runs from the dev host over the HTTP API / `yt` CLI: `get-pipeline-state`,
   `select_rows`/`read_table` on outputs, flow-view reads — mirroring the original test's asserts.
 - **Layout per scenario** (`yandex/ytsaurus_dev/<scenario>/`):
@@ -97,7 +98,7 @@ Ordered simplest-first; complexity S/M/L ≈ new code + verification effort.
 ## Workflow per scenario
 
 1. Write scenario dir (code, spec, yt_sync script, README).
-2. Build + strip binary; bootstrap Cypress objects; prepare input data.
+2. Bootstrap Cypress objects; prepare input data (the server comes from the released image).
 3. Deploy via the bootstrap vanilla operation; wait for `Working` (or `Completed` for finite).
 4. Run the verification queries; record actual output in README.
 5. Stop pipeline, abort operation (leave Cypress objects for inspection).
