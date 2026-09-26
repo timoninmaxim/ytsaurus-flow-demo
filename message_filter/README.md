@@ -14,7 +14,7 @@ Terminal 1 — bootstrap once, render the spec, deploy (from this dir):
 python3 yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
 python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' \
     < pipeline.yson.template > pipeline.yson
-podman run --rm --network host --env-host -v "$PWD:$PWD" -w "$PWD" \
+podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline \
     ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
 ```
 

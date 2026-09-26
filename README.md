@@ -59,8 +59,8 @@ the scripts read these variables from the environment and nothing else. It must 
 
 ## Deployment model
 
-The flow runner runs **on the dev host**, in a podman container of a released image on the host
-network, with the scenario dir mounted at its own path and the shell environment passed through.
+The flow runner runs **on the dev host**, in a podman container of a released image, with the
+scenario dir mounted at `/app/pipeline` and only `YT_TOKEN` passed in from the environment.
 It connects over RPC, uploads the released `flow_server`, submits the pipeline spec and launches
 the controller+worker vanilla operation, then streams the controller log to the terminal. The jobs
 run in a released image too: a spec sets `docker_image` on the `controller` and `worker` tasks.
@@ -101,9 +101,12 @@ python3 -c 'import os, string, sys; sys.stdout.write(string.Template(sys.stdin.r
     < pipeline.yson.template > pipeline.yson
 
 # Deploy + stream the controller log; Ctrl-C detaches.
-podman run --rm --network host --env-host -v "$PWD:$PWD" -w "$PWD" \
+podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline \
     ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
 ```
+
+`-w /app/pipeline` becomes unnecessary from the next Flow release, whose images start in
+`/app/pipeline`.
 
 That is the launch of a pipeline built from stock classes. A Java, Python or Go pipeline launches
 through its SDK launcher instead — never bare `flow_server`. Every SDK has the same command line,
@@ -114,12 +117,14 @@ resources) and hands the launch to `flow_server`. Run it in the matching release
 | SDK | Program (inside the scenario dir) | Image |
 |-----|-----------------------------------|-------|
 | Python | `/usr/bin/python3 main.py` — the script ends in `app.run()` | `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` |
-| Java | `/opt/java/openjdk/bin/java -cp 'lib/*' <MainClass>` — `main` calls `FlowApplication.run(args, context)`; add `--env YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` to `podman run` | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
+| Java | `/opt/java/openjdk/bin/java -cp 'lib/*' <MainClass>` — `main` calls `FlowApplication.run(args, context)`; add `-e YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` to `podman run` | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
 | Go | `./pipeline` — a static binary whose `main` calls `runner.Launch` | `ghcr.io/ytsaurus/flow-nightly:dev-0.2.1` |
 
-e.g. `podman run --rm --network host --env-host -v "$PWD:$PWD" -w "$PWD" ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1 /usr/bin/python3 main.py --config pipeline.yson --flow-bin /usr/bin/flow_server`.
+e.g. `podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1 /usr/bin/python3 main.py --config pipeline.yson --flow-bin /usr/bin/flow_server`.
 Anything the program or the spec ships (`local_files`, jars) must live inside the scenario dir,
-the only host path the container sees.
+the only host path the container sees; refer to it by a path relative to the scenario dir. The
+runner reads only `YT_TOKEN` from the environment: a scenario that forwards more variables to
+its jobs lists each with `-e NAME`.
 
 Then feed the pipeline and watch its output from a second terminal with the `yt` CLI — each
 scenario's README shows the exact commands. When done, `./stop.sh <scenario>` from the repo root
