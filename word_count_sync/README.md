@@ -19,10 +19,11 @@ otherwise increments its count in the external state table. The source is finite
 pipeline reaches `completed` on its own once it has drained the queue, and the assertion is the
 content of the two tables afterwards.
 
-The scenario has three companion variants — a C++ one (`companion/`) and Go/Java ones
-(`companion_go/`, `companion_java/`) that put the reader on the *source* path too, not just the
-transform. **Only the Go and Java variants run against the Flow 0.2.1 test-release artifacts and
-are verified below; the C++ variant needs a source build and is not covered by the artifact run**
+The scenario has two companion variants — a C++ one (`companion/`) and a Go one
+(`companion_go/`) that puts the reader on the *source* path too, not just the transform. The Java
+variant is its own scenario, `word_count_sync_java/`. **Only the Go variant runs against the Flow
+0.2.1 test-release artifacts and is verified below; the C++ variant needs a source build and is not
+covered by the artifact run**
 (its user code predates every published release).
 
 ## C++ companion variant (not covered by the artifact run)
@@ -131,105 +132,13 @@ Both tables match the expected result exactly, and together they prove the stop 
 applied from the spec parameters: `flow` is four letters long, so without the filter it would be
 counted, and `to` would show up among the skipped words. Neither appears.
 
-## Java companion variant
-
-`companion_java/` writes the reader and the counter in **Java** (`tech.ytsaurus:flow-*`), hosted
-by the same stock `flow_server` through the same two companion host classes. Everything runs
-under its own root `$YT_DEV_ROOT/word_count_sync_java`.
-
-- **One entry point for both roles.** `WordCountSyncMain.main` registers the two computations and
-  calls `FlowApplication.run(args, context)`, which acts as the launcher (enriches the spec, ships
-  the companion jars, execs `flow_server`) with no Flow env vars set, and serves both
-  computations over the companion gRPC protocol inside the worker job.
-- **The stop words travel in the spec's `parameters`,** as in the Go variant — the Java SDK has no
-  counterpart of the C++ companion-hosted resource, so `WordCount` reads `min_word_length` and
-  `stop_words` from `ctx.getComputationParameters()`.
-- **External state is `Payload`-shaped.** `StateDescriptors.external("/state")` hands back the
-  stored row via `getOrDefault()`, or an all-null row of the state schema when the key is absent —
-  which folds the two live "no count yet" shapes (absent row, present row with `count` null) into
-  one per-column null check, the direct translation of the C++ `optional<i64>.value_or(0)`. Only
-  `count` is set on the way back; the state manager fills the key columns from the grouping key.
-- `WordCountSyncTest` drives both computations through the SDK's `TestComputationHarness`
-  (`flow-test-utils`) against a trimmed copy of the pipeline spec — split order, stop-word
-  filtering, skipped-word emission, counting over external state, the null-`count` row shape, and
-  an end-to-end pipe of the scenario's two lines — no cluster needed.
-
-### Build
-
-Built with the official Gradle toolchain container, never a local or Arcadia-built JDK/Gradle,
-from `companion_java`:
-
-```bash
-cd word_count_sync/companion_java
-podman run --rm -v "$PWD:/src" -w /src docker.io/library/gradle:8-jdk17 \
-    gradle -q --refresh-dependencies test installLib -PflowVersion=0.2.1-SNAPSHOT
-```
-
-This resolves the SDK from the Sonatype snapshot repository, runs the offline tests
-(`WordCountSyncTest`), and syncs the pipeline jar plus its runtime deps into `lib/` (gitignored) —
-the classpath the launch command's `-cp 'lib/*'` uses.
-
-### Run
-
-From `word_count_sync/companion_java`:
-
-```bash
-python3 yt_sync.py                # once: objects under word_count_sync_java/
-jinjanate pipeline.yson.j2 > pipeline.yson   # every {{ VAR }} from the env; an unset one fails the render
-
-printf '%s\n' '{"text": "hello to a world", "$$tablet_index": 0}' \
-              '{"text": "flow is on it", "$$tablet_index": 0}' \
-    | yt insert-rows --format json "$YT_DEV_ROOT/word_count_sync_java/input_queue"
-
-podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" \
-    ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1 -cp 'lib/*' \
-    tech.ytsaurus.flow.demo.wordcountsync.WordCountSyncMain --config pipeline.yson
-```
-
-The launcher enriches the spec (companion classpath), uploads the released `flow_server` and
-launches the controller+worker vanilla operation, then streams the controller log. The source is
-finite, so this command returns on its own once the pipeline reaches `completed`. Then:
-
-```bash
-yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_java/pipeline"
-yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_java/word_counts]" --format json
-yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_java/skipped_words]" --format json
-cd .. && ./stop.sh word_count_sync_java   # aborts the vanilla operation (pipeline is already completed)
-```
-
-### Observed output
-
-Recorded from the live run on the demo cluster against the Flow 0.2.1 test release (same commit
-and tag as the Go variant's), image `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` confirmed on
-both task specs, worker `file_paths` carrying 64 launcher-shipped jars under `java_companion/`
-including `flow-server-0.2.1-SNAPSHOT.jar`/`flow-runner-…`/`flow-core-…` — the released SDK, not a
-source build. Launched 04:04:53 UTC → `completed` 04:06:00 (67 s end to end):
-
-```
-$ yt flow get-pipeline-state "$YT_DEV_ROOT/word_count_sync_java/pipeline"
-completed
-
-$ yt select-rows "word, count from [$YT_DEV_ROOT/word_count_sync_java/word_counts]" --format json
-{"word":"hello","count":1}
-{"word":"world","count":1}
-
-$ yt select-rows "word, length from [$YT_DEV_ROOT/word_count_sync_java/skipped_words]" --format json
-{"word":"a","length":1}
-{"word":"is","length":2}
-{"word":"it","length":2}
-{"word":"on","length":2}
-```
-
-Identical to the Go variant's output, and the two tables again prove the stop words were applied
-from the spec parameters.
-
 ## Rerunning
 
 `completed` is a final state that refuses both `stop-pipeline` and a spec update, and the input
 queue's consumer cannot be rewound, so a repeat run means recreating the scenario:
 
 ```bash
-./stop.sh word_count_sync_go   # or word_count_sync_java
+./stop.sh word_count_sync_go
 yt remove -r "$YT_DEV_ROOT/word_count_sync_go"
 python3 word_count_sync/companion_go/yt_sync.py
 # re-insert the two feed lines, then relaunch as in "Run" above
