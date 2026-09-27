@@ -21,11 +21,11 @@ and verify that the pipeline reaches `Working` and produces the result the origi
   `address_resolver = {enable_ipv4 = %true; enable_ipv6 = %false}` for controller/worker jobs. At
   the runner level IPv6 must stay **enabled** instead — the RPC endpoint is reached over NAT64.
 - **Bootstrap of Cypress objects** — `yt_sync_mini` (`yt/yt/flow/library/python/yt_sync_mini`) only;
-  no internal yt_sync. It is `pip install`-ed from the ytsaurus repo via the single wheel
-  `ytsaurus-flow-yt-sync-mini` (`yt/python/packages/ytsaurus-flow-yt-sync-mini`, alongside the other
-  ytsaurus Python packages; it bundles `pipeline_tables` too), not vendored. Each scenario ships its
-  own `yt_sync/` script (PIPELINES/STAGES dicts + `__main__.py`, as in `examples/cpp/noop/yt_sync`)
-  that creates the pipeline node and the scenario's queues/tables/consumers/producers.
+  no internal yt_sync. It is `pip install`-ed from PyPI as the single package
+  `ytsaurus-flow-yt-sync-mini` (it bundles `pipeline_tables` too), not vendored. Each scenario ships
+  its own `yt_sync/` script (PIPELINES/STAGES dicts + `__main__.py`, as in
+  `examples/cpp/noop/yt_sync`) that creates the pipeline node and the scenario's
+  queues/tables/consumers/producers.
 - **Cluster-name aliasing.** `<cluster=...>` rich-path references resolve to
   `<cluster_name>.yt.yandex.net` by default; every vanilla block must carry
   `proxy_url_aliasing_rules = {<cluster_name> = <internal proxy URL>}`.
@@ -76,6 +76,7 @@ Ordered simplest-first; complexity S/M/L ≈ new code + verification effort.
 | 19 | `companion_python` | tests/companion/passthrough_transform + types/python | python companion (gRPC) inside the worker vanilla job; TTransformCompanionComputation | output mirrors input; native passthrough bypasses companion / type roundtrip | L |
 | 20 | `pipeline_alter` | tests/pipeline_alter | reader queue→queue; stop, rename computation in static spec, restart | data intact after rename; source-path change erases old state | L |
 | 21 | `transform_high_throughput` | yandex/benchmarks (moved) | TRandomSource → TProcessFunctionComputation (per-key state) → TAsyncQueueSink | throughput reported; `states` table non-empty | L |
+| 22 | `yql_map` | yandex/examples/cpp/yql_yson (simplified) | `yql_flow_server`; reader → TProcessFunctionComputation + TYqlYsonProcessFunction (row-wise `SELECT`: filter + re-key) → TSyncQueueSink | output rows uppercased/doubled, zero-value row dropped; **binary is Arcadia-only** — the YQL extension and its dep `yt/yql/purecalc` are not in the OSS export (see gaps register) | S |
 
 ## Excluded (with reason)
 

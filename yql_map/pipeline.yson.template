@@ -1,0 +1,94 @@
+{
+    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "proxy_role" = "default";
+    "clients_cache" = {
+        "default_connection" = {
+            "enable_proxy_discovery" = %false;
+            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+        };
+    };
+    "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
+    "path" = "${YT_DEV_ROOT}/yql_map/pipeline";
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "input_stream_ids" = [];
+                "output_stream_ids" = ["events"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/yql_map/input_queue";
+                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/yql_map/consumer";
+                            "finite" = %false;
+                        };
+                    };
+                };
+            };
+            "mapper" = {
+                "computation_class_name" = "NYT::NFlow::TProcessFunctionComputation";
+                "processing_function" = "NYT::NFlow::TYqlYsonProcessFunction";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(data)"; "type" = "uint64"; required = %true;};
+                    {"name" = "data"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["events"];
+                "output_stream_ids" = ["mapped"];
+                "streams_dependency" = {
+                    "mapped" = ["events"];
+                };
+                "sinks" = {
+                    "queue" = {
+                        "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
+                        "input_stream_ids" = ["mapped"];
+                        "parameters" = {
+                            "queue_path" = "${YT_DEV_ROOT}/yql_map/output_queue";
+                            "column_filter" = ["key"; "data"];
+                        };
+                    };
+                };
+                "processing_function_parameters" = {
+                    "query" = "SELECT String::AsciiToUpper(user) AS key, CAST(value * 2 AS Int64) AS value FROM Input WHERE value > 0";
+                    "key_columns" = ["key"];
+                    "input_schema" = [
+                        {"name" = "user"; "type" = "String";};
+                        {"name" = "value"; "type" = "Int64";};
+                    ];
+                };
+            };
+        };
+        "streams" = {
+            "events" = {
+                "class_name" = "NYT::NFlow::TYqlYsonMessage";
+                "schema" = [
+                    {"name" = "data"; "type" = "string";};
+                ];
+            };
+            "mapped" = {
+                "class_name" = "NYT::NFlow::TYqlYsonMessage";
+                "schema" = [
+                    {"name" = "key"; "type" = "string";};
+                    {"name" = "data"; "type" = "string";};
+                ];
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {"batch_duration" = 1000;};
+            "mapper" = {"batch_duration" = 1000;};
+        };
+        "job_tracker" = {
+            "job_threads" = 4;
+        };
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "${YT_POOL}";
+        "network_project" = #;
+        "worker" = {"count" = 1;};
+        "node_config" = {"address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};};
+        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
+    };
+}
