@@ -5,5 +5,4 @@ env.sh
 pipeline*.yson
 *.stripped
 .cache/
-word_count_sync/companion_go/word_count_sync_go
 word_count_sync/logs/
