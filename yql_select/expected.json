@@ -1,0 +1,2 @@
+{"string_field": "foo_ytflow", "int64_field": 100, "bool_field": false}
+{"string_field": "foobar_ytflow", "int64_field": 10000, "bool_field": true}
