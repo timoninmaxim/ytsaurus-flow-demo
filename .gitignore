@@ -5,6 +5,7 @@ env.sh
 pipeline*.yson
 *.stripped
 .cache/
+word_count_sync_go/word_count_sync_go
 !word_count_sync_java/src/test/resources/pipeline.yson
 word_count_sync_java/.gradle/
 word_count_sync_java/build/
