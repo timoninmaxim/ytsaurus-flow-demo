@@ -1,0 +1,3 @@
+{"string_field": "FOO", "length_field": 3, "bool_field": false}
+{"string_field": "BAR", "length_field": 3, "bool_field": true}
+{"string_field": "FOOBAR", "length_field": 6, "bool_field": true}

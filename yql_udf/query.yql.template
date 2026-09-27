@@ -1,0 +1,31 @@
+use ytdemo;
+
+pragma Engine = "ytflow";
+
+pragma Ytflow.Cluster = "ytdemo";
+pragma Ytflow.PipelinePath = "$PIPELINE_PATH";
+
+pragma Ytflow.YtConsumerPath = "$SCENARIO_ROOT/main_consumer";
+pragma Ytflow.YtProducerPath = "$SCENARIO_ROOT/main_producer";
+
+pragma Ytflow.Pool = "$YT_POOL";
+
+pragma Ytflow.ControllerRpcPort = "27180";
+pragma Ytflow.ControllerMonitoringPort = "27181";
+pragma Ytflow.WorkerRpcPort = "27182";
+pragma Ytflow.WorkerMonitoringPort = "27183";
+
+pragma Ytflow.ControllerCount = "1";
+pragma Ytflow.ControllerCpuLimit = "1.0";
+pragma Ytflow.ControllerMemoryLimit = "1G";
+
+pragma Ytflow.WorkerCount = "1";
+pragma Ytflow.WorkerCpuLimit = "1.0";
+pragma Ytflow.WorkerMemoryLimit = "1G";
+
+insert into `$SCENARIO_ROOT/output_queue`
+select
+    String::AsciiToUpper(string_field) as string_field,
+    LENGTH(string_field) as length_field,
+    String::Contains(string_field, "bar") as bool_field
+from `$SCENARIO_ROOT/input_queue`;
