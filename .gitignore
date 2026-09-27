@@ -5,3 +5,10 @@ env.sh
 pipeline*.yson
 *.stripped
 .cache/
+state_joiner/companion_java/.gradle/
+state_joiner/companion_java/build/
+state_joiner/companion_java/lib/
+state_joiner/companion_java/logs/
+# The offline test's fixture, not a rendered spec: the "pipeline*.yson" rule above would
+# otherwise ignore it too, since a slash-less gitignore pattern matches the basename anywhere.
+!state_joiner/companion_java/src/test/resources/pipeline.yson

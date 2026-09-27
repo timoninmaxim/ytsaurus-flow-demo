@@ -1,0 +1,67 @@
+{
+    spec = {
+        computations = {
+            "accumulator" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "Hash"; expression = "farm_hash(UserId)"; type = "uint64"; required = %true};
+                    {name = "UserId"; type = "string"; required = %true};
+                ];
+                input_stream_ids = ["events"];
+                output_stream_ids = ["users"];
+                parameters = {};
+                external_state_managers = {
+                    "/user_total" = {
+                        parameters = {path = "//placeholder"};
+                    };
+                };
+            };
+            "joiner" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "Hash"; expression = "farm_hash(UserId)"; type = "uint64"; required = %true};
+                    {name = "UserId"; type = "string"; required = %true};
+                ];
+                input_stream_ids = ["users"];
+                output_stream_ids = ["results"];
+                parameters = {};
+                external_state_joiners = {
+                    "/user_total" = {
+                        join_on = {};
+                        parameters = {path = "//placeholder"};
+                    };
+                };
+            };
+        };
+        streams = {
+            "events" = {
+                schema = [
+                    {name = "UserId"; type = "string"; required = %true};
+                    {name = "Amount"; type = "int64"; required = %true};
+                ];
+            };
+            "users" = {
+                schema = [
+                    {name = "UserId"; type = "string"; required = %true};
+                    {name = "Bucket"; type = "uint64"; required = %true};
+                ];
+            };
+            "results" = {
+                schema = [
+                    {name = "UserId"; type = "string"; required = %true};
+                    {name = "Total"; type = "int64"; required = %true};
+                ];
+            };
+        };
+    };
+    dynamic_spec = {
+        computations = {
+            "accumulator" = {
+                parameters = {};
+            };
+            "joiner" = {
+                parameters = {};
+            };
+        };
+    };
+}
