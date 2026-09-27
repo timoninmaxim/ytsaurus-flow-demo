@@ -33,9 +33,7 @@ jinjanate pipeline.yson.j2 > pipeline.yson   # every {{ VAR }} from the env; an 
 podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 --config pipeline.yson
 ```
 
-The source is finite, so the launch returns on its own once the pipeline is `completed`. In the
-first seconds the controller log shows a few `FlowViewKeeper is not initialized` errors that recover
-within five seconds: the controller answers requests before its flow view exists.
+The source is finite, so the launch returns on its own once the pipeline is `completed`.
 
 ## Check
 
