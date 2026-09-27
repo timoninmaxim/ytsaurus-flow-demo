@@ -94,7 +94,7 @@ Ordered simplest-first; complexity S/M/L ≈ new code + verification effort.
 | `recipes` | test infra, not a test |
 | `flow_execute` | value is the Arcadia prebuilt-package version matrix; pipeline itself is trivial |
 | `buffer_memory_usage`, `process_function_overhead`, `pure_swift_high_throughput` | measure RSS/CPU via `/proc` of co-located worker processes — impossible with vanilla jobs |
-| Java companion variants (`companion/*` java, `key_visitor/java*`, `reanimate_vanilla/java`) | Java Flow SDK is Arcadia-internal (`IF (NOT OPENSOURCE)`) |
+| Java companion variants (`companion/*` java, `reanimate_vanilla/java`) | Java Flow SDK is Arcadia-internal (`IF (NOT OPENSOURCE)`); `key_visitor`'s Go and Java companion variants are now covered by the Flow 0.2.1 test-release artifacts (see `key_visitor/README.md`) |
 | `reanimate_vanilla` | its subject (vanilla reanimation tool) partially covered implicitly; cpp variant needs 2 clusters; revisit if wanted |
 | `diagnostic_tools`, `start_stop_pipeline_stress`, `ipv4_support` | reuse other pipelines; their asserts are about local tooling/process control; partially covered by our deployment procedure itself |
 | `add_message_distribute_flag` | python-companion watermark corner case; fold into #19 if wanted |
