@@ -63,11 +63,12 @@ Nothing consumes the output queue, so it keeps every row: insert more and read a
 
 ## Stop
 
-From the repo root:
+Stop the pipeline, then abort its vanilla operation — the runner printed its id at launch, in the
+`Started vanilla operation (..., OperationId: <id>)` line:
 
 ```bash
-./stop.sh companion_python
+yt flow stop-pipeline "$YT_DEV_ROOT/companion_python/pipeline"
+yt abort-op <OperationId>
 ```
 
-It stops the pipeline and aborts its vanilla operation. To drop the scenario's Cypress objects as
-well: `yt remove -r "$YT_DEV_ROOT/companion_python"`.
+To drop the scenario's Cypress objects as well: `yt remove -r "$YT_DEV_ROOT/companion_python"`.
