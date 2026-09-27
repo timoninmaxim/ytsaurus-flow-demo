@@ -17,37 +17,6 @@ passthrough this scenario used to run. The controller, the worker and the runner
 talking to each other directly instead of through a YT vanilla operation and the cluster's RPC
 proxy.
 
-## Why direct mode
-
-A vanilla pipeline's controller and worker run inside the cluster, where the RPC proxy can dial
-them to relay the runner's commands. Here the controller runs on the dev host instead, which the
-cluster has no route into. The runner config's `direct_controller_commands = {enabled = %true;}`
-block (see
-[docs](https://github.com/ytsaurus/ytsaurus/blob/main/yt/docs/ru/_includes/flow/tools/cli.md#direct-controller-commands))
-makes the runner send commands straight to the controller's RPC port instead of through the
-proxy — the one connection this setup actually has, since the runner also runs on the host.
-`direct_controller_commands` is a runner-only feature: neither the `yt` CLI nor the UI has it, so
-anything that goes through the proxy (`yt flow ...`) still cannot reach this controller — see Stop
-below.
-
-The controller also gets `YT_FLOW_SKIP_LEADER_PROXY_CONFIRMATION=1`: without it, it keeps retrying
-a proxy round-trip to confirm its own leadership that can never succeed here, and logs it as a
-plain failure; with it set, it logs the same fact as the benign reason `yt flow` and the UI won't
-work against it.
-
-Because there is no proxy relay, the controller, the worker and the runner must reach each other
-directly by address:port, so all three run with `--network host`. Each node config also sets
-`address_resolver.localhost_name_override = "127.0.0.1"`, so the controller and worker advertise a
-loopback address the other host processes can actually dial. A node config may only enable one of
-`enable_ipv4` / `enable_ipv6` (the released binary rejects both at once); `enable_ipv4 = %true`
-here matches the loopback override, while the node still reaches the cluster's NAT64 address fine
-since that is a literal address, not something it resolves.
-
-Security note from the same docs page: with the controller's default `require_proxy_signature =
-%false`, any host that can reach its RPC port can issue commands unauthenticated. Fine for this
-demo (the port is only exposed on the dev host); do not do this against an RPC port reachable by
-anyone untrusted.
-
 ## How the companion gets into the job
 
 `TJavaCompanionManager` resource whose `classpath` names jars the job environment already holds is
@@ -72,6 +41,22 @@ dependencies into `lib/`:
 podman run --rm -v "$PWD:/src" -w /src docker.io/library/gradle:8-jdk17 \
     gradle -q --refresh-dependencies test installLib
 ```
+
+## Direct mode
+
+Here the controller runs on the dev host, which the YT cluster has no route into. 
+The runner config's `direct_controller_commands = {enabled = %true;}` block (see
+[docs](https://github.com/ytsaurus/ytsaurus/blob/main/yt/docs/ru/_includes/flow/tools/cli.md#direct-controller-commands))
+makes the runner send commands straight to the controller's RPC port instead of through the
+YT RPC proxy — the one connection this setup actually has, since the runner also runs on the host.
+`direct_controller_commands` is a runner-only feature: neither the `yt` CLI nor the UI has it, so
+anything that goes through the proxy (`yt flow ...`) still cannot reach this controller — see Stop
+below.
+
+The controller also gets `YT_FLOW_SKIP_LEADER_PROXY_CONFIRMATION=1`: without it, it keeps retrying
+a proxy round-trip to confirm its own leadership that can never succeed here, and logs it as a
+plain failure; with it set, it logs the same fact as the benign reason `yt flow` and the UI won't
+work against it.
 
 ## Run
 
