@@ -1,8 +1,8 @@
 # Creates the Cypress objects for the standalone_direct scenario: the pipeline
-# node, the input queue with its consumer, and the output queue. Same shape as
-# message_filter/yt_sync.py -- this scenario reuses its pipeline logic, only the
-# launch model (host-only controller/worker/runner, direct controller commands)
-# differs.
+# node, the input queue with its consumer, and the output queue. Unlike
+# message_filter/yt_sync.py, the output_queue schema carries one extra column,
+# data_upper -- the writer's filtering now runs in a Java companion (see the
+# scenario README), which adds it to every row it passes through.
 #
 # Run after sourcing your env file (see the repo README):
 #   python3 yt_sync.py
@@ -13,9 +13,17 @@ import os
 
 from yt.yt.flow.library.python.yt_sync_mini import StagesSpec, run_yt_sync_easy_mode
 
-QUEUE_SCHEMA = [
+INPUT_QUEUE_SCHEMA = [
     {"name": "key", "type": "string"},
     {"name": "data", "type": "string"},
+    {"name": "$timestamp", "type": "uint64"},
+    {"name": "$cumulative_data_weight", "type": "int64"},
+]
+
+OUTPUT_QUEUE_SCHEMA = [
+    {"name": "key", "type": "string"},
+    {"name": "data", "type": "string"},
+    {"name": "data_upper", "type": "string"},
     {"name": "$timestamp", "type": "uint64"},
     {"name": "$cumulative_data_weight", "type": "int64"},
 ]
@@ -50,11 +58,14 @@ def main():
         name: {
             "default": {
                 "$merge_presets": ["builtin:table_preset"],
-                "schema": QUEUE_SCHEMA,
+                "schema": schema,
                 "clusters": {"_all_data_clusters": {"attributes": {"tablet_count": 1}}},
             },
         }
-        for name in ("input_queue", "output_queue")
+        for name, schema in (
+            ("input_queue", INPUT_QUEUE_SCHEMA),
+            ("output_queue", OUTPUT_QUEUE_SCHEMA),
+        )
     }
 
     consumers = {

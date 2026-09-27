@@ -12,3 +12,8 @@ word_count_sync_java/.gradle/
 word_count_sync_java/build/
 word_count_sync_java/lib/
 word_count_sync_java/logs/
+!standalone_direct/src/test/resources/pipeline.yson
+standalone_direct/.gradle/
+standalone_direct/build/
+standalone_direct/lib/
+standalone_direct/logs/

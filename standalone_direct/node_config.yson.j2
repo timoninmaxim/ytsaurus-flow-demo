@@ -4,6 +4,10 @@
     "path" = "{{ YT_DEV_ROOT }}/standalone_direct/pipeline";
     "rpc_port" = {{ FLOW_RPC_PORT }};
     "monitoring_port" = {{ FLOW_MONITORING_PORT }};
+    "companion" = {
+        "port" = {{ FLOW_COMPANION_PORT }};
+        "monitoring_port" = {{ FLOW_COMPANION_MONITORING_PORT }};
+    };
     "clients_cache" = {
         "default_connection" = {
             "enable_proxy_discovery" = %false;

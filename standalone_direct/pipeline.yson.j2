@@ -30,7 +30,7 @@
                 };
             };
             "writer" = {
-                "computation_class_name" = "NYT::NFlow::TPassthroughComputation";
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
                 "group_by_schema" = [
                     {"name" = "hash"; "expression" = "farm_hash(key)"; "type" = "uint64"; required = %true;};
                     {"name" = "key"; "type" = "string";};
@@ -46,6 +46,12 @@
                         };
                     };
                 };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
             };
         };
         "streams" = {
@@ -59,15 +65,24 @@
                 "schema" = [
                     {"name" = "key"; "type" = "string";};
                     {"name" = "data"; "type" = "string";};
+                    {"name" = "data_upper"; "type" = "string";};
                 ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
+                "parameters" = {
+                    "main_class" = "tech.ytsaurus.flow.demo.standalonedirect.StandaloneDirectMain";
+                    "classpath" = "/app/pipeline/lib/*";
+                    "jdk_bin_path" = "/opt/java/openjdk/bin/java";
+                };
+                "dependencies" = {};
             };
         };
     };
     "dynamic_spec" = {
         "computations" = {
-            "reader" = {
-                "skip_if_expression" = "key = \"bad\"";
-            };
             "writer" = {
                 "parameters" = {"desired_partition_count" = 2;};
             };
