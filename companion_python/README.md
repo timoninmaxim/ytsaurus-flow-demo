@@ -17,13 +17,12 @@ all: native computations run in-process in the worker and never call the compani
 `main.py` is both the launcher and the companion: the Python SDK's `app.run()` picks the mode.
 
 **Restriction:** the launcher ships only `main.py`, so the pipeline's Python code must fit in that
-one file.
+one file. Alternative is ship all required files and dependencies into a docker image used for vanilla
+jobs.
 
 The launcher prepares the pipeline for start: it enriches the spec with the user file — `main.py`
 goes to the worker as the companion, and the `CompanionManager` resource is pointed at it — then
-hands the spec to the image's `flow_server`. That is why the spec declares `CompanionManager` with
-empty parameters and ships no files. Both vanilla tasks run in the same image as the launch, so the
-companion runs on its `/usr/bin/python3` with the preinstalled SDK.
+hands the spec to the image's `flow_server`.
 
 ## Run
 
