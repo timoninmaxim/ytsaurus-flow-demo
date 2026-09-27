@@ -10,3 +10,8 @@ swift_map_batching/companion_java/build/
 swift_map_batching/companion_java/lib/
 swift_map_batching/companion_java/logs/
 swift_map_batching/companion_go/swift_map_batching_go
+!word_count_sync_java/src/test/resources/pipeline.yson
+word_count_sync_java/.gradle/
+word_count_sync_java/build/
+word_count_sync_java/lib/
+word_count_sync_java/logs/
