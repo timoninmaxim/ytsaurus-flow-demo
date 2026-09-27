@@ -60,8 +60,11 @@ export YT_MY_SECRET=5           # the demo's fixed expected value; a real secret
 secret_env/build.sh             # builds + strips the binary (YTSAURUS=<checkout>)
 python3 secret_env/yt_sync.py   # once: the pipeline node (no queues or tables in this scenario)
 
-# This scenario deploys its own binary instead of the stock flow_server, so name it:
-FLOW_BIN=secret_env/secret_env_pipeline.stripped ./run.sh secret_env
+# This scenario deploys its own binary instead of the released flow_server: render the spec
+# and run that binary directly (it uploads itself to the vanilla jobs).
+cd secret_env
+jinjanate pipeline.yson.j2 > pipeline.yson
+./secret_env_pipeline.stripped --config pipeline.yson
 ```
 
 The pipeline stays in `working` and the log keeps reporting healthy jobs — that is the assertion
@@ -79,11 +82,11 @@ print("secret_env   =", spec.get("secret_env"))
 print("secure_vault =", spec.get("secure_vault"))'
 ```
 
-When done, `./stop.sh secret_env` stops the pipeline and aborts the vanilla operation.
+When done, `./stop.sh secret_env` (from the repo root) stops the pipeline and aborts the vanilla operation.
 
 ## Observed output
 
-`run.sh` keeps streaming: the runner polls the pipeline, the controller reports its jobs (cluster
+The runner keeps streaming: the runner polls the pipeline, the controller reports its jobs (cluster
 URL and guids elided):
 
 ```
