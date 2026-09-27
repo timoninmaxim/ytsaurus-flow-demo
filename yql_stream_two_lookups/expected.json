@@ -1,0 +1,2 @@
+{"key": "foobar", "value": 4, "key_before": "foobar_before", "key_after": "foobar_after", "kv_value_a": 14, "kv_value_b": 18}
+{"key": "foo", "value": 5, "key_before": "foo_before", "key_after": "foo_after", "kv_value_a": 12, "kv_value_b": 16}
