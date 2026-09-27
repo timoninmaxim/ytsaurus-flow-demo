@@ -14,20 +14,16 @@ all: native computations run in-process in the worker and never call the compani
 
 ## How the companion gets into the job
 
-`main.py` is both the launcher and the companion — the Python SDK's `app.run()` picks the mode.
-Everything comes from the Flow 0.2.1 test release (see the repo README's "Released artifacts");
-nothing is built from source:
+`main.py` is both the launcher and the companion: the Python SDK's `app.run()` picks the mode.
 
-- The launch runs `main.py --config pipeline.yson` in
-  `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` (the released server plus
-  `ytsaurus-flow-companion` 0.2.1 on `/usr/bin/python3`, the image's entrypoint). The launcher adds
-  `main.py` to the worker's `local_files` as `py_companion`, points the `CompanionManager`
-  resource's entrypoint at it, reserves the companion's ports, and execs the image's `flow_server`
-  (`YT_FLOW_BIN`) with the enriched spec. That is why
-  the spec declares `CompanionManager` with empty parameters and ships no files.
-- Both vanilla tasks run in the same image, so the worker spawns `./py_companion` (the shebang is
-  `/usr/bin/python3`) with the preinstalled SDK. `main.py` must stay a single file: the launcher ships
-  only the script itself.
+**Restriction:** the launcher ships only `main.py`, so the pipeline's Python code must fit in that
+one file.
+
+The launcher prepares the pipeline for start: it enriches the spec with the user file — `main.py`
+goes to the worker as the companion, and the `CompanionManager` resource is pointed at it — then
+hands the spec to the image's `flow_server`. That is why the spec declares `CompanionManager` with
+empty parameters and ships no files. Both vanilla tasks run in the same image as the launch, so the
+companion runs on its `/usr/bin/python3` with the preinstalled SDK.
 
 ## Run
 
@@ -44,9 +40,7 @@ podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" \
     ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1 main.py --config pipeline.yson
 ```
 
-The last command enriches the spec with the companion, uploads the released `flow_server`,
-launches the controller+worker vanilla operation and streams the controller log; Ctrl-C only
-detaches, the pipeline keeps running.
+The launch streams the controller log; Ctrl-C only detaches, the pipeline keeps running.
 
 Terminal 2 — feed the input queue and read the output:
 
