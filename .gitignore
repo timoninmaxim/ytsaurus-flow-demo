@@ -5,3 +5,7 @@ env.sh
 pipeline*.yson
 *.stripped
 .cache/
+transform_high_throughput/companion_java/.gradle/
+transform_high_throughput/companion_java/build/
+transform_high_throughput/companion_java/lib/
+transform_high_throughput/companion_java/logs/
