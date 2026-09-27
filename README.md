@@ -11,18 +11,20 @@ images literally, so a version bump is a search-and-replace of `dev-0.2.1`.
 
 | Artifact | Coordinate |
 |----------|------------|
-| Server image (runner + vanilla jobs) | `ghcr.io/ytsaurus/flow-nightly:dev-0.2.1` (`/usr/bin/flow_server`) |
-| Server image + JRE 17 (Java companions) | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
-| Server image + Python SDK (Python companions) | `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` |
-| Python packages (TestPyPI) | `ytsaurus-flow-yt-sync-mini==0.2.1.dev10`, `ytsaurus-flow-companion==0.2.1.dev10` |
+| Server image (runner + vanilla jobs) | `ghcr.io/ytsaurus/flow-nightly:dev-0.2.1` (entrypoint `/usr/bin/flow_server`) |
+| Server image + JRE 17 (Java companions) | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` (entrypoint `java`) |
+| Server image + Python SDK (Python companions) | `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` (entrypoint `python3`) |
+| Python packages (TestPyPI) | `ytsaurus-flow-yt-sync-mini==0.2.1.dev11`, `ytsaurus-flow-companion==0.2.1.dev11` |
 | Java (Maven snapshots) | `tech.ytsaurus:flow-*:0.2.1-SNAPSHOT` from `https://central.sonatype.com/repository/maven-snapshots/` |
-| Go | `go get go.ytsaurus.tech/yt/go/flow@c27be0f50d0a` (pseudo-version of the release commit) |
+| Go | `go get go.ytsaurus.tech/yt/go/flow@6f22b54593c1` (pseudo-version of the release commit) |
 
-The images pull anonymously. The Python packages live on TestPyPI, their dependencies on PyPI:
+The images pull anonymously. Each starts in `/app/pipeline`, where a scenario dir is mounted, and
+names its `flow_server` in `YT_FLOW_BIN` for the SDK launchers. The Python packages live on
+TestPyPI, their dependencies on PyPI:
 
 ```bash
 pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ \
-    ytsaurus-flow-yt-sync-mini==0.2.1.dev10
+    ytsaurus-flow-yt-sync-mini==0.2.1.dev11
 ```
 
 **Not covered by the artifact run:** scenarios that need a source build — a C++ companion, a custom
@@ -93,22 +95,21 @@ Three cluster quirks every spec template (`pipeline.yson.j2`) accounts for:
 
 A pipeline built from stock classes is launched with the released `flow_server` itself. A Java,
 Python or Go pipeline launches through its SDK launcher instead — never bare `flow_server`. Every
-SDK has the same command line, `<pipeline program> --config pipeline.yson --flow-bin
-/usr/bin/flow_server`: the launcher enriches the spec (ships the pipeline program as the companion,
-fills stream schemas and companion resources) and hands the launch to `flow_server`. It runs in the
-matching released image:
+SDK has the same command line, `<pipeline program> --config pipeline.yson`: the launcher enriches
+the spec (ships the pipeline program as the companion, fills stream schemas and companion resources)
+and hands the launch to the image's `flow_server` (`YT_FLOW_BIN`). It runs in the matching released
+image, whose entrypoint is the program's interpreter:
 
-| SDK | Program (inside the scenario dir) | Image |
+| SDK | `podman run` arguments after the image | Image |
 |-----|-----------------------------------|-------|
-| Python | `/usr/bin/python3 main.py` — the script ends in `app.run()` | `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` |
-| Java | `/opt/java/openjdk/bin/java -cp 'lib/*' <MainClass>` — `main` calls `FlowApplication.run(args, context)`; needs `-e YT_FLOW_JDK_BIN_PATH=/opt/java/openjdk/bin/java` on `podman run` | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
-| Go | `./pipeline` — a static binary whose `main` calls `runner.Launch` | `ghcr.io/ytsaurus/flow-nightly:dev-0.2.1` |
+| Python | `main.py --config pipeline.yson` — the script ends in `app.run()` | `ghcr.io/ytsaurus/flow-python-nightly:dev-0.2.1` |
+| Java | `-cp 'lib/*' <MainClass> --config pipeline.yson` — `main` calls `FlowApplication.run(args, context)` | `ghcr.io/ytsaurus/flow-java-nightly:dev-0.2.1` |
+| Go | `--entrypoint ./pipeline` before the image, `--config pipeline.yson` after it — a static binary whose `main` calls `runner.Launch` | `ghcr.io/ytsaurus/flow-nightly:dev-0.2.1` |
 
 Anything the program or the spec ships (`local_files`, jars) must live inside the scenario dir,
 the only host path the container sees; refer to it by a path relative to the scenario dir. The
 runner reads only `YT_TOKEN` from the environment: a scenario that forwards more variables to its
-jobs lists each with `-e NAME`. `-w /app/pipeline` becomes unnecessary from the next Flow release,
-whose images start in `/app/pipeline`.
+jobs lists each with `-e NAME`.
 
 ## Layout
 

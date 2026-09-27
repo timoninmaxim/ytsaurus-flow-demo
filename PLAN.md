@@ -36,8 +36,9 @@ and verify that the pipeline reaches `Working` and produces the result the origi
 - **Pool**: `$YT_POOL`. Worker/controller job defaults (6 CPU / 18 GiB) fit the demo exec nodes
   (16 CPU / 65 GiB × 5).
 - **Binaries** come from the released images: a stock-server pipeline launches with that image's
-  `flow_server` in podman (`podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline
-  <image> ...`), a Java/Python/Go pipeline with its SDK launcher run in the matching image; either uploads the released `flow_server` for the vanilla jobs, which run in the same
+  `flow_server` in podman (`podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" <image> --config
+  pipeline.yson`), a Java/Python/Go pipeline with its SDK launcher run in the matching image; either
+  uploads the released `flow_server` for the vanilla jobs, which run in the same
   image (`docker_image`). Only source-build scenarios (C++ companions, YQL) use a local, stripped
   build.
 - **Verification** runs from the dev host over the HTTP API / `yt` CLI: `get-pipeline-state`,

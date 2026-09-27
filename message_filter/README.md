@@ -16,14 +16,12 @@ Terminal 1 — from this dir: bootstrap the Cypress objects once, render the spe
 ```bash
 python3 yt_sync.py   # once: pipeline node, input_queue + consumer, output_queue
 jinjanate pipeline.yson.j2 > pipeline.yson   # every {{ VAR }} from the env; an unset one fails the render
-podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" -w /app/pipeline \
-    ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 /usr/bin/flow_server --config pipeline.yson
+podman run --rm -e YT_TOKEN -v "$PWD:/app/pipeline" ghcr.io/ytsaurus/flow-nightly:dev-0.2.1 --config pipeline.yson
 ```
 
 The last command uploads the released `flow_server`, launches the controller+worker vanilla
 operation and streams the controller log; Ctrl-C only detaches, the pipeline keeps running.
-`-w /app/pipeline` becomes unnecessary from the next Flow release, whose images start in
-`/app/pipeline`.
+The image's entrypoint is `flow_server`, and it starts in `/app/pipeline`.
 
 Terminal 2 — feed the input queue and watch the output:
 
