@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 env.sh
 pipeline*.yson
+node_config*.yson
 *.stripped
 .cache/
