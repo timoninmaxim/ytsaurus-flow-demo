@@ -50,8 +50,6 @@ anyone untrusted.
 
 ## How the companion gets into the job
 
-A vanilla worker ships the companion into its own job's `local_files` — there is no such job here,
-so that path does not apply. Instead the released job-environment feature applies: a
 `TJavaCompanionManager` resource whose `classpath` names jars the job environment already holds is
 taken from there rather than shipped. The scenario dir is mounted at `/app/pipeline` in every
 container (controller, worker and runner alike), so the pipeline spec's `resources.CompanionManager`
@@ -62,11 +60,7 @@ the one that spawns the companion process. `main_class` names the entry point,
 `StandaloneDirectMain`, registered in the same class as the runner's own `main`.
 
 The worker container therefore needs the same two things the runner container needs: the `lib/`
-jars mounted in, and a JVM on its `PATH` — which is why the worker and the controller run in
-`flow-java-nightly` too, not the plain `flow-nightly` image, even though the controller itself
-never runs Java: `flow-java-nightly`'s default entrypoint is `java` (built for the launcher
-command below), so the controller and the worker start `flow_server` with
-`--entrypoint /usr/bin/flow_server` instead.
+jars mounted in, and a JVM on its `PATH` — which is part of `flow-java-nightly`.
 
 ## Build
 
@@ -96,10 +90,8 @@ listens on its two (the controller never spawns one, see "How the companion gets
 
 ```bash
 jinjanate pipeline.yson.j2 > pipeline.yson
-FLOW_RPC_PORT=19101 FLOW_MONITORING_PORT=19111 FLOW_COMPANION_PORT=0 FLOW_COMPANION_MONITORING_PORT=0 \
-    jinjanate node_config.yson.j2 > node_config_controller.yson
-FLOW_RPC_PORT=19102 FLOW_MONITORING_PORT=19112 FLOW_COMPANION_PORT=19103 FLOW_COMPANION_MONITORING_PORT=19113 \
-    jinjanate node_config.yson.j2 > node_config_worker.yson
+jinjanate node_config.yson.j2 > node_config_controller.yson
+jinjanate node_config.yson.j2 > node_config_worker.yson
 ```
 
 Three terminals, from this dir (`--network host` so the three processes can dial each other by
@@ -141,21 +133,7 @@ podman run --rm --network host -e YT_TOKEN -v "$PWD:/app/pipeline" \
 ```
 
 The runner logs the line that shows it went direct, then submits the spec, starts the pipeline and
-streams the controller log; Ctrl-C only detaches, the pipeline keeps running:
-
-```
-Pipeline commands go directly to the leader controller
-```
-
-Check there is no vanilla operation behind this pipeline — `yt list-operations` must not show one
-for this scenario. The pipeline's own state (`working`) is visible in the runner's log
-(`Wait finished (CurrentState: Working, TargetState: Working)`) or the controller's
-(`Jobs status (PipelineState: Working, ...)`); `yt flow get-pipeline-state` itself does **not**
-work here — see Stop below, same cause:
-
-```bash
-yt list-operations --state running   # empty, or only unrelated pipelines' operations
-```
+streams the controller log; Ctrl-C only detaches, the pipeline keeps running.
 
 ## Feed and read
 
@@ -179,23 +157,10 @@ Only the `good_*` rows come back, each with `data_upper` filled in by the Java c
 
 ## Stop
 
-The released runner's CLI (`TSimpleRunnerProgram`) only ever drives a pipeline towards `Working` —
-this release has no runner flag to submit a `Stopped`/`Paused` target instead, and
-`direct_controller_commands` is a runner-only feature, so `yt flow stop-pipeline` /
-`pause-pipeline` (through the CLI, hence through the proxy) cannot reach this controller either:
+Re-submitting new pipeline spec is done with the same runner command. It first stops pipeline, updates spec,
+and starts pipeline.
 
-```bash
-yt flow get-pipeline-state --pipeline-path "$YT_DEV_ROOT/standalone_direct/pipeline"
-# and the same for stop-pipeline / pause-pipeline: the CLI always goes through the proxy, which
-# tries to dial the controller's published (loopback) address and fails immediately:
-#   Cannot connect to pipeline controller leader. Probably controller is stopped or it is failing
-#     Channel terminated
-#       Error connecting to [127.0.0.1]:19101
-#         Connect error
-#           Connection refused
-```
-
-What actually works here is stopping the processes themselves: Ctrl-C the runner (terminal 3, just
+For stopping the processes: Ctrl-C the runner (terminal 3, just
 detaches — the controller and worker keep running), then stop the other two:
 
 ```bash
