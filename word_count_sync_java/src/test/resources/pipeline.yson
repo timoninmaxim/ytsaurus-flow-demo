@@ -1,0 +1,63 @@
+{
+    spec = {
+        computations = {
+            "reader" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TSwiftOrderedSourceCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(text)"; type = "uint64"; required = %true};
+                    {name = "text"; type = "string"};
+                ];
+                input_stream_ids = ["lines"];
+                output_stream_ids = ["words"];
+                parameters = {};
+                external_state_managers = {};
+            };
+            "counter" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(word)"; type = "uint64"; required = %true};
+                    {name = "word"; type = "string"};
+                ];
+                input_stream_ids = ["words"];
+                output_stream_ids = ["skipped"];
+                parameters = {
+                    min_word_length = 4;
+                    stop_words = ["flow"; "to"];
+                };
+                external_state_managers = {
+                    "/state" = {
+                        parameters = {path = "//placeholder"};
+                    };
+                };
+            };
+        };
+        streams = {
+            "lines" = {
+                schema = [
+                    {name = "text"; type = "string"};
+                ];
+            };
+            "words" = {
+                schema = [
+                    {name = "word"; type = "string"};
+                ];
+            };
+            "skipped" = {
+                schema = [
+                    {name = "word"; type = "string"};
+                    {name = "length"; type = "int64"};
+                ];
+            };
+        };
+    };
+    dynamic_spec = {
+        computations = {
+            "reader" = {
+                parameters = {};
+            };
+            "counter" = {
+                parameters = {};
+            };
+        };
+    };
+}

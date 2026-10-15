@@ -1,0 +1,39 @@
+{
+    spec = {
+        computations = {
+            "writer" = {
+                computation_class_name = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                group_by_schema = [
+                    {name = "hash"; expression = "farm_hash(key)"; type = "uint64"; required = %true};
+                    {name = "key"; type = "string"};
+                ];
+                input_stream_ids = ["event_in"];
+                output_stream_ids = ["event_out"];
+                parameters = {};
+                external_state_managers = {};
+            };
+        };
+        streams = {
+            "event_in" = {
+                schema = [
+                    {name = "key"; type = "string"};
+                    {name = "data"; type = "string"};
+                ];
+            };
+            "event_out" = {
+                schema = [
+                    {name = "key"; type = "string"};
+                    {name = "data"; type = "string"};
+                    {name = "data_upper"; type = "string"};
+                ];
+            };
+        };
+    };
+    dynamic_spec = {
+        computations = {
+            "writer" = {
+                parameters = {};
+            };
+        };
+    };
+}

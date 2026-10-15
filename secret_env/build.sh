@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds this scenario's own pipeline binary (pipeline/main.cpp) and strips it into the scenario
-# dir as secret_env_pipeline.stripped — that stripped file is what run.sh deploys.
+# dir as secret_env_pipeline.stripped — that stripped file is what the README runs.
 #
 # ya only builds targets that live inside the checkout, and there is no way to build against
 # installed Flow libraries out of tree, so the sources are staged into the checkout, built there,

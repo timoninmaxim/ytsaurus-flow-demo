@@ -1,14 +1,17 @@
 {
-    "cluster_url" = "${YT_PROXY_INTERNAL}";
+    "cluster_url" = "{{ YT_PROXY_INTERNAL }}";
     "proxy_role" = "default";
     "clients_cache" = {
         "default_connection" = {
             "enable_proxy_discovery" = %false;
-            "proxy_addresses" = ["${YT_PROXY_RPC}"];
+            "proxy_addresses" = ["{{ YT_PROXY_RPC }}"];
         };
     };
     "address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %true;};
-    "path" = "${YT_DEV_ROOT}/message_filter/pipeline";
+    "path" = "{{ YT_DEV_ROOT }}/standalone_direct/pipeline";
+    "direct_controller_commands" = {
+        "enabled" = %true;
+    };
     "spec" = {
         "computations" = {
             "reader" = {
@@ -19,15 +22,15 @@
                     "queue" = {
                         "source_class_name" = "NYT::NFlow::TQueueSource";
                         "parameters" = {
-                            "queue_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/message_filter/input_queue";
-                            "consumer_path" = "<cluster=${YT_CLUSTER_NAME}>${YT_DEV_ROOT}/message_filter/consumer";
+                            "queue_path" = "<cluster={{ YT_CLUSTER_NAME }}>{{ YT_DEV_ROOT }}/standalone_direct/input_queue";
+                            "consumer_path" = "<cluster={{ YT_CLUSTER_NAME }}>{{ YT_DEV_ROOT }}/standalone_direct/consumer";
                             "finite" = %false;
                         };
                     };
                 };
             };
             "writer" = {
-                "computation_class_name" = "NYT::NFlow::TPassthroughComputation";
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
                 "group_by_schema" = [
                     {"name" = "hash"; "expression" = "farm_hash(key)"; "type" = "uint64"; required = %true;};
                     {"name" = "key"; "type" = "string";};
@@ -39,8 +42,14 @@
                         "sink_class_name" = "NYT::NFlow::TSyncQueueSink";
                         "input_stream_ids" = ["event_out"];
                         "parameters" = {
-                            "queue_path" = "${YT_DEV_ROOT}/message_filter/output_queue";
+                            "queue_path" = "{{ YT_DEV_ROOT }}/standalone_direct/output_queue";
                         };
+                    };
+                };
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
                     };
                 };
             };
@@ -56,15 +65,24 @@
                 "schema" = [
                     {"name" = "key"; "type" = "string";};
                     {"name" = "data"; "type" = "string";};
+                    {"name" = "data_upper"; "type" = "string";};
                 ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
+                "parameters" = {
+                    "main_class" = "tech.ytsaurus.flow.demo.standalonedirect.StandaloneDirectMain";
+                    "classpath" = "/app/pipeline/lib/*";
+                    "jdk_bin_path" = "/opt/java/openjdk/bin/java";
+                };
+                "dependencies" = {};
             };
         };
     };
     "dynamic_spec" = {
         "computations" = {
-            "reader" = {
-                "skip_if_expression" = "key = \"bad\"";
-            };
             "writer" = {
                 "parameters" = {"desired_partition_count" = 2;};
             };
@@ -72,12 +90,5 @@
         "job_tracker" = {
             "job_threads" = 4;
         };
-    };
-    "vanilla" = {
-        "enable" = %true;
-        "pool" = "${YT_POOL}";
-        "worker" = {"count" = 1;};
-        "node_config" = {"address_resolver" = {"enable_ipv4" = %true; "enable_ipv6" = %false;};};
-        "proxy_url_aliasing_rules" = {"${YT_CLUSTER_NAME}" = "${YT_PROXY_INTERNAL}";};
     };
 }
