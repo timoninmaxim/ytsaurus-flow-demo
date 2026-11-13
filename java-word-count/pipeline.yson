@@ -1,0 +1,94 @@
+{
+    "cluster_url" = "YOUR_CLUSTER_HTTP_PROXY";
+    "proxy_role" = #;
+    "path" = "//home/YOUR_USER/java-word-count/pipeline";
+    "address_resolver" = {
+        "enable_ipv4" = %false;
+        "enable_ipv6" = %true;
+    };
+    "vanilla" = {
+        "enable" = %true;
+        "pool" = "YOUR_POOL";
+        "cache_path" = "//home/YOUR_USER/java-word-count/file_cache";
+        "max_failed_job_count" = 20;
+        "controller" = {
+            "count" = 1;
+            "cpu_limit" = 1;
+            "memory_limit" = 2147483648;
+            "port_count" = 2;
+            "docker_image" = "ghcr.io/ytsaurus/flow-java:0.3.0";
+        };
+        "worker" = {
+            "count" = 1;
+            "cpu_limit" = 2;
+            "memory_limit" = 4294967296;
+            "port_count" = 3;
+            "docker_image" = "ghcr.io/ytsaurus/flow-java:0.3.0";
+        };
+    };
+    "spec" = {
+        "computations" = {
+            "reader" = {
+                "computation_class_name" = "NYT::NFlow::TSwiftPassthroughOrderedSourceComputation";
+                "output_stream_ids" = ["words"];
+                "source_streams" = {
+                    "queue" = {
+                        "source_class_name" = "NYT::NFlow::TQueueSource";
+                        "parameters" = {
+                            "queue_path" = "<cluster=YOUR_CLUSTER_HTTP_PROXY>//home/YOUR_USER/java-word-count/input_queue";
+                            "consumer_path" = "<cluster=YOUR_CLUSTER_HTTP_PROXY>//home/YOUR_USER/java-word-count/consumer";
+                            "finite" = %false;
+                        };
+                    };
+                };
+                "parameters" = {};
+            };
+            "mapper" = {
+                "computation_class_name" = "NYT::NFlow::NCompanion::TTransformCompanionComputation";
+                "group_by_schema" = [
+                    {"name" = "hash"; "expression" = "farm_hash(word)"; "type" = "uint64"; required = %true;};
+                    {"name" = "word"; "type" = "string";};
+                ];
+                "input_stream_ids" = ["words"];
+                "output_stream_ids" = [];
+                "required_resource_ids" = {
+                    "CompanionManager" = {
+                        "worker" = %true;
+                        "controller" = %false;
+                    };
+                };
+                "parameters" = {
+                    "internal_states" = ["word-state"];
+                };
+            };
+        };
+        "streams" = {
+            "words" = {
+                "schema" = [
+                    {name = "word"; type = "string";};
+                ];
+            };
+        };
+        "resources" = {
+            "CompanionManager" = {
+                "resource_class_name" = "NYT::NFlow::NCompanion::TJavaCompanionManager";
+                "parameters" = {
+                    "main_class" = "tech.ytsaurus.flow.examples.wordcount.WordCountApplication";
+                };
+                "dependencies" = {};
+            };
+        };
+    };
+    "dynamic_spec" = {
+        "computations" = {
+            "reader" = {
+                "parameters" = {
+                };
+            };
+            "mapper" = {
+                "parameters" = {
+                };
+            };
+        };
+    };
+}
